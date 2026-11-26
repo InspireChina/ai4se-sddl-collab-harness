@@ -223,12 +223,15 @@ def change_doc_ref(version_or_name: str) -> str:
 
 
 def change_temp_subdir(state: dict[str, Any] | None = None, *, version: str = "") -> str:
-    """本轮 change 会话的临时提示词子目录名，如 ``change-v1``。
+    """本轮 reopen 注入节点的临时提示词子目录名，如 ``change-v1``。
 
-    reopen 注入节点与切到常规交付后的 initial-tail 节点都沿用同一子目录，
-    避免覆盖首轮 ``temp-prompts/<node>.prompt.md``。无 change 上下文时返回空。
+    仅 ``run_mode=reopen`` 时使用子目录，避免覆盖首轮 ``temp-prompts/<node>.prompt.md``。
+    已切到常规交付（initial-tail）或无 change 上下文时返回空，落 ``temp-prompts/<node>.prompt.md``。
     """
     state = state or {}
+    # initial-tail：首轮本就没有该节点产出/temp prompt，走常规路径即可
+    if str(state.get("run_mode") or "").strip().lower() != "reopen":
+        return ""
     ver = (version or str(state.get("change_version") or "")).strip()
     if not ver:
         change_file = str((state.get("node_outputs") or {}).get("change_file") or "")

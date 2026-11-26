@@ -236,7 +236,7 @@ sddl reopen --name <同名>
 | 进度 | `change_status` 仍记 `status` / `last_node` / `all_docs_updated`（仅状态，不驱动续跑） |
 | 续跑 | 各节点 md 的 `reopen_impact.reviewed_changes`（仅 `changes/change-vN.md`）；再次 reopen 从**尚未复核本 change** 的最早节点接着跑 |
 | 复核范围 | 进入节点时若已有阶段文档则注入 reopen；没有则常规交付。凡本轮 change 会话产出的节点，引擎都会写入 `reopen_impact.reviewed_changes` 供续跑 |
-| 临时提示词 | 首轮：`temp-prompts/<node>.prompt.md`；reopen 复核中：`temp-prompts/change-vN/<node>.prompt.md`（不覆盖首轮） |
+| 临时提示词 | 首轮 / initial-tail：`temp-prompts/<node>.prompt.md`；reopen 注入节点：`temp-prompts/change-vN/<node>.prompt.md`（不覆盖首轮） |
 | 覆盖方式 | 有差异时**直接覆盖该节点原文件**（不另建版本副本）；`changes/` 仅存变更点清单 |
 | 上游透传 | 下一节点注入上一节点的 `reopen_impact`，便于快速定位 |
 | 意图 | 有缓存则沿用；没有则跑意图识别 |

@@ -355,24 +355,22 @@ def test_reviewed_changes_inserted_before_workflow_status() -> None:
     assert final.find("reopen_impact") < final.find("## Workflow 状态")
 
 
-def test_change_temp_subdir_survives_initial_tail() -> None:
+def test_change_temp_subdir_only_while_reopen() -> None:
     from src.reopen import change_temp_subdir
 
     assert change_temp_subdir({"run_mode": "reopen", "change_version": "v1"}) == "change-v1"
-    # reopen → initial 后仍按 change_version 落 temp-prompts/change-vN
-    assert (
-        change_temp_subdir({"run_mode": "initial", "change_version": "v1"}) == "change-v1"
-    )
     assert (
         change_temp_subdir(
             {
-                "run_mode": "initial",
+                "run_mode": "reopen",
                 "change_version": "",
                 "node_outputs": {"change_file": "docs/changes/change-v2.md"},
             }
         )
         == "change-v2"
     )
+    # initial-tail：走常规 temp-prompts/<node>.prompt.md，不进 change-vN
+    assert change_temp_subdir({"run_mode": "initial", "change_version": "v1"}) == ""
     assert change_temp_subdir({"run_mode": "initial"}) == ""
 
 
