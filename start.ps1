@@ -37,6 +37,7 @@ function Show-Usage {
         '  -d, -docs-dir DIR       覆盖完整产出目录'
         '  -auto                   无人值守'
         '  -fresh                  清除已有产出后重来'
+        '  -reopen                 验收前变更（与 -fresh 互斥；通常由 sddl reopen 转入）'
         '  -h, -help               显示帮助'
         ''
         '依赖安装请用 .\init_env.cmd，本脚本不会执行 pip install。'
@@ -45,6 +46,7 @@ function Show-Usage {
         '  .\start.cmd -tool echo -file ..\docs\requirements\jwt-login-requirement.md -name jwt-login'
         '  .\start.cmd -name jwt-login -file ..\docs\requirements\jwt-login-requirement.md'
         '  .\start.cmd -name jwt-login'
+        '  .\start.cmd -reopen -name jwt-login'
     ) -join [Environment]::NewLine
     Write-Host $text
 }
@@ -127,6 +129,7 @@ function Test-VenvHealthy([string]$Dir) {
 # 本脚本永不 pip install；未安装时提示执行 init_env
 $AutoMode = $false
 $Fresh = $false
+$Reopen = $false
 $Tool = ''
 $Model = ''
 $DocsDir = ''
@@ -137,6 +140,7 @@ $ReqText = New-Object System.Collections.Generic.List[string]
 $optHelp = @('-h', '-help', '--help')
 $optAuto = @('-auto', '--auto')
 $optFresh = @('-fresh', '--fresh')
+$optReopen = @('-reopen', '--reopen')
 $optTool = @('-t', '-tool', '--tool')
 $optModel = @('-model', '--model')
 $optName = @('-n', '-name', '--name')
@@ -156,6 +160,9 @@ while ($i -lt $tokens.Count) {
         $i++
     } elseif ($optFresh -contains $a) {
         $Fresh = $true
+        $i++
+    } elseif ($optReopen -contains $a) {
+        $Reopen = $true
         $i++
     } elseif ($optTool -contains $a) {
         if ($i + 1 -ge $tokens.Count) { Die '选项 -tool 需要参数' }
@@ -264,9 +271,17 @@ if (-not (Test-PackageInstalled $VenvPython)) {
 }
 Write-Host '==> 依赖已安装（安装请用 init_env.cmd，此处不执行 pip install）'
 
+if ($Fresh -and $Reopen) {
+    Die '--fresh 与 --reopen 互斥'
+}
+
 # ---------- default requirement ----------
-# 续跑只传 -name：交给 run.py 读取 spec/<name>/00-requirement.md
-if (-not $ReqFile -and $ReqText.Count -eq 0 -and -not $ReqName) {
+if ($Reopen) {
+    if (-not $ReqName -and -not $DocsDir) {
+        Die 'reopen 必须提供 --name（或 --docs-dir）'
+    }
+} elseif (-not $ReqFile -and $ReqText.Count -eq 0 -and -not $ReqName) {
+    # 续跑只传 -name：交给 run.py 读取 spec/<name>/00-requirement.md
     $defaultReq = '..\docs\requirements\jwt-login-requirement.md'
     if (Test-Path -LiteralPath $defaultReq) {
         Write-Host "==> 未传需求，使用默认: $defaultReq"
@@ -278,7 +293,9 @@ if (-not $ReqFile -and $ReqText.Count -eq 0 -and -not $ReqName) {
 
 # ---------- build run.py args ----------
 $RunArgs = New-Object System.Collections.Generic.List[string]
-if ($ReqFile) {
+if ($Reopen) {
+    [void]$RunArgs.Add('--reopen')
+} elseif ($ReqFile) {
     if (-not (Test-Path -LiteralPath $ReqFile)) { Die "需求文件不存在: $ReqFile" }
     [void]$RunArgs.Add('--file')
     [void]$RunArgs.Add($ReqFile)
@@ -292,7 +309,11 @@ if ($DocsDir) { [void]$RunArgs.Add('--docs-dir'); [void]$RunArgs.Add($DocsDir) }
 if ($AutoMode) { [void]$RunArgs.Add('--auto') }
 if ($Fresh) { [void]$RunArgs.Add('--fresh') }
 
-Write-Host '==> 启动 workflow'
+if ($Reopen) {
+    Write-Host '==> 启动 reopen workflow'
+} else {
+    Write-Host '==> 启动 workflow'
+}
 Write-Host ('    {0} run.py {1}' -f $VenvPython, ($RunArgs -join ' '))
 Write-Host ''
 

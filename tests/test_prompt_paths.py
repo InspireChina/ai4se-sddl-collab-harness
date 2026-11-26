@@ -75,10 +75,15 @@ def test_ai_rules_write_back_uses_relative_project_docs() -> None:
 
 def test_all_prompts_declare_temp_prompts_path_anchor() -> None:
     root = Path(__file__).resolve().parents[1] / "prompts"
+    # reopen_inject 是引擎叠加片段，不是独立节点提示词
+    skip = {"reopen_inject.md"}
     missing = [
         p.name
         for p in sorted(root.glob("*.md"))
-        if "路径约定（必须遵守）" not in p.read_text(encoding="utf-8")
-        or "temp-prompts/" not in p.read_text(encoding="utf-8")
+        if p.name not in skip
+        and (
+            "路径约定（必须遵守）" not in p.read_text(encoding="utf-8")
+            or "temp-prompts/" not in p.read_text(encoding="utf-8")
+        )
     ]
     assert missing == []

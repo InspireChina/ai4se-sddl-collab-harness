@@ -143,6 +143,7 @@ items:
     answer: ""
 ```
 
+
 ```yaml tasks_approval
 status: pending
 confirmed_at: ""
@@ -170,6 +171,7 @@ user_note: ""
 ### 阶段 3：任务定稿
 
 输出最终任务清单，覆盖初稿写入 `{{final_output_path}}`，保留顶部 YAML（checklist 全部 resolved）以及：
+
 
 ```yaml tasks_approval
 status: pending

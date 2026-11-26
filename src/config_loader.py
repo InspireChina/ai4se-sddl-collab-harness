@@ -47,7 +47,10 @@ class NodeConfig:
     recommendation_threshold: float = 0.8
 
     def resolve_prompt_file(self, auto: bool) -> str:
-        """按是否 --auto 选择人工介入 / 无人值守 prompt。"""
+        """按是否 --auto 选择人工介入 / 无人值守 prompt。
+
+        reopen 不换文件：引擎在渲染后注入 ``prompts/reopen_inject.md``。
+        """
         if auto and self.prompt_file_auto:
             return self.prompt_file_auto
         return self.prompt_file

@@ -125,6 +125,7 @@
 
 报告正文与结果表写完后，在同一文件末尾写入定稿标记（引擎据此自动进入下一节点）：
 
+
 ```yaml test_report_approval
 status: approved
 confirmed_at: "<ISO8601>"

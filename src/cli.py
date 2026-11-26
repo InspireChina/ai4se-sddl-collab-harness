@@ -1,6 +1,6 @@
 """sddl 命令入口（macOS / Windows / Linux）。
 
-  通用: sddl init | sddl start | sddl-init | sddl-start
+  通用: sddl init | sddl start | sddl reopen | sddl-init | sddl-start | sddl-reopen
 """
 
 from __future__ import annotations
@@ -17,6 +17,8 @@ from pathlib import Path
 import yaml
 
 SKILL_NAME = "start-workflow"
+# init 时一并安装到各 Agent skills 目录
+INSTALL_SKILL_NAMES = ("start-workflow", "reopen-workflow")
 APP_CONFIG_DIR_NAME = "sdd-loop-workflow-config"
 AI_RULES_SUBDIR = "ai-rules"
 APP_WORKFLOW_CONFIG_FILENAME = "workflow-local.yaml"
@@ -34,8 +36,10 @@ USAGE = """\
 用法（macOS / Windows / Linux 通用）:
   sddl init [--app-root DIR] [--workflow-root DIR]
   sddl start [start 脚本同样的选项...]
+  sddl reopen --name NAME [--auto] [--tool ...] [--model ...]
   sddl-init ...
   sddl-start ...
+  sddl-reopen ...
 """
 
 
@@ -43,8 +47,8 @@ def _engine_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
-def skill_template_path(engine: Path) -> Path:
-    path = engine / "skills" / SKILL_NAME / "SKILL.md"
+def skill_template_path(engine: Path, skill_name: str = SKILL_NAME) -> Path:
+    path = engine / "skills" / skill_name / "SKILL.md"
     if not path.is_file():
         raise SystemExit(f"错误: 找不到 skill 模板: {path}")
     return path
@@ -138,16 +142,22 @@ def resolve_app_root(engine: Path, explicit: Path | None) -> Path:
 
 
 def install_skills(engine: Path, app_root: Path) -> list[Path]:
-    template = skill_template_path(engine).read_text(encoding="utf-8")
     written: list[Path] = []
-    for _agent, (relative_dir, tool) in AGENT_SKILL_DIRS.items():
-        dest = app_root / relative_dir / SKILL_NAME
-        if dest.exists():
-            shutil.rmtree(dest)
-        dest.mkdir(parents=True)
-        skill_file = dest / "SKILL.md"
-        skill_file.write_text(template.format(tool=tool), encoding="utf-8")
-        written.append(skill_file)
+    for skill_name in INSTALL_SKILL_NAMES:
+        raw = skill_template_path(engine, skill_name).read_text(encoding="utf-8")
+        # start-workflow 模板含 {tool}；reopen-workflow 无占位则原样写入
+        for _agent, (relative_dir, tool) in AGENT_SKILL_DIRS.items():
+            dest = app_root / relative_dir / skill_name
+            if dest.exists():
+                shutil.rmtree(dest)
+            dest.mkdir(parents=True)
+            skill_file = dest / "SKILL.md"
+            try:
+                text = raw.format(tool=tool)
+            except (KeyError, IndexError, ValueError):
+                text = raw
+            skill_file.write_text(text, encoding="utf-8")
+            written.append(skill_file)
     return written
 
 
@@ -376,6 +386,11 @@ def command_start(argv: list[str]) -> int:
     return 1  # pragma: no cover
 
 
+def command_reopen(argv: list[str]) -> int:
+    """方案 A：对外仍是 ``sddl reopen``，内部转调 ``start.sh|start.cmd --reopen``。"""
+    return command_start(["--reopen", *argv])
+
+
 def main(argv: list[str] | None = None) -> None:
     if argv is None:
         argv = sys.argv[1:]
@@ -388,6 +403,8 @@ def main(argv: list[str] | None = None) -> None:
         raise SystemExit(command_init(argv))
     if invoked.endswith("-start"):
         raise SystemExit(command_start(argv))
+    if invoked.endswith("-reopen"):
+        raise SystemExit(command_reopen(argv))
 
     if not argv or argv[0] in {"-h", "--help"}:
         print(USAGE, end="")
@@ -397,6 +414,8 @@ def main(argv: list[str] | None = None) -> None:
         raise SystemExit(command_init(argv[1:]))
     if argv[0] == "start":
         raise SystemExit(command_start(argv[1:]))
+    if argv[0] == "reopen":
+        raise SystemExit(command_reopen(argv[1:]))
 
     print(f"错误: 未知命令 {argv[0]}\n", file=sys.stderr)
     print(USAGE, file=sys.stderr, end="")

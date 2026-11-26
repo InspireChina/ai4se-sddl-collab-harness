@@ -119,6 +119,7 @@
 
 覆盖初稿写入 `{{final_output_path}}`，含全部 resolved checklist，以及：
 
+
 ```yaml tasks_approval
 status: approved
 confirmed_at: "<ISO8601>"

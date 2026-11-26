@@ -83,7 +83,18 @@ def main():
         action="store_true",
         help="清除该需求目录下已有产出（保留 00-requirement.md），从头开始",
     )
+    parser.add_argument(
+        "--reopen",
+        action="store_true",
+        help=(
+            "验收前变更：读取 changes/change-vN.md（run_mode=reopen），"
+            "从需求分析起按差异推进并覆盖原产出；与 --fresh 互斥"
+        ),
+    )
     args = parser.parse_args()
+    if args.fresh and args.reopen:
+        parser.error("--fresh 与 --reopen 互斥")
+
     wf_cfg = load_workflow_config(args.config)
     app_root = resolve_app_root(PROJECT_ROOT, wf_cfg.app_root)
     content_base = resolve_project_docs_dir(app_root, wf_cfg.project_docs_dir)
@@ -91,7 +102,12 @@ def main():
     source_file = None
     requirement = None
 
-    if args.file:
+    if args.reopen:
+        if not args.name and not args.docs_dir:
+            parser.error("reopen 必须提供 --name（或 --docs-dir）")
+        # 正文由 workflow 从变更稿读取；此处占位即可
+        requirement = f"reopen:{args.name or args.docs_dir}"
+    elif args.file:
         source_file = args.file.resolve()
         requirement = source_file.read_text(encoding="utf-8")
     elif args.requirement:
@@ -145,14 +161,19 @@ def main():
             model or "(空=各 tool 默认)",
         )
 
-    result = workflow.run(
-        requirement=requirement,
-        docs_dir=args.docs_dir,
-        name=args.name,
-        source_file=source_file,
-        auto=args.auto,
-        fresh=args.fresh,
-    )
+    try:
+        result = workflow.run(
+            requirement=requirement,
+            docs_dir=args.docs_dir,
+            name=args.name,
+            source_file=source_file,
+            auto=args.auto,
+            fresh=args.fresh,
+            reopen=args.reopen,
+        )
+    except ValueError as exc:
+        logging.error("%s", exc)
+        raise SystemExit(2) from exc
 
     if not result.get("resume_from_node") and result.get("test_passed"):
         print("\n=== Workflow 已完成（无需续跑）===")
@@ -163,6 +184,9 @@ def main():
     print(f"需求目录: {result.get('docs_dir', '')}")
     print(f"需求 slug: {result.get('requirement_slug', '')}")
     print(f"启动节点: {result.get('resume_from_node', '')}")
+    print(f"运行模式: {result.get('run_mode', 'initial')}")
+    if result.get("change_version"):
+        print(f"变更版本: {result.get('change_version')}")
     print(f"澄清轮次: {result.get('clarification_round', 0)}")
     print(f"澄清完成: {result.get('clarification_resolved', False)}")
     print(f"需求类型: {result.get('requirement_type', 'unknown')}")

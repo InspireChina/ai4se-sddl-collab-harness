@@ -66,6 +66,7 @@
 
 报告正文写完后，在同一文件末尾写入定稿标记（引擎据此结束本节点）：
 
+
 ```yaml commit_approval
 status: approved
 confirmed_at: "<ISO8601>"

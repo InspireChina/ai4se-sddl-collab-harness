@@ -44,6 +44,7 @@
 3. 本提示词里的参考/产出路径相对 `temp-prompts/`（见「路径约定」）。报告正文里引用同需求目录文档（含用例附件）时，写相对**本报告所在目录**的路径（如 `attachments/test-cases.md`），禁止本机绝对路径。
 4. 报告和用例文件都落盘后，在报告末尾加上写完标记。这只表示生成结束，不要列澄清问题，不要等用户确认：
 
+
 ```yaml test_cases_approval
 status: pending
 confirmed_at: ""

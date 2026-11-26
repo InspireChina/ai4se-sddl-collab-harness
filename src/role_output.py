@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -40,8 +41,12 @@ OUTPUT_STAGE_DIR = {
     "07-commit.md": "code",
 }
 
+_CHANGE_REQUIREMENTS_NAME = re.compile(r"^01-requirements-v\d+\.md$", re.IGNORECASE)
+
 
 def stage_dir(docs_dir: Path, logical: str) -> Path:
+    if _CHANGE_REQUIREMENTS_NAME.match(logical):
+        return docs_dir / "requirements"
     name = OUTPUT_STAGE_DIR.get(logical, "")
     return docs_dir / name if name else docs_dir
 
@@ -86,6 +91,12 @@ def find_output(docs_dir: Path, logical: str, role: str | None = None) -> Path |
         path = folder / suffixed_name(logical, role)
         return path if path.is_file() else None
     return None
+
+
+def is_requirements_logical(logical: str) -> bool:
+    return logical == "01-requirements.md" or bool(
+        _CHANGE_REQUIREMENTS_NAME.match(logical)
+    )
 
 
 def list_role_outputs(docs_dir: Path, logical: str) -> list[Path]:

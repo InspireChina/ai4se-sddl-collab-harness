@@ -32,10 +32,11 @@ class CursorTool(AITool):
         *,
         node_id: str | None = None,
         prompt_dir: str | None = None,
+        temp_subdir: str | None = None,
         model: str | None = None,
     ) -> AIToolResult:
         prompt_file = save_node_prompt(
-            prompt, cwd, node_id=node_id, prompt_dir=prompt_dir
+            prompt, cwd, node_id=node_id, prompt_dir=prompt_dir, temp_subdir=temp_subdir
         )
         launch = launch_read_prompt(prompt_file, cwd=cwd)
         cli_flags = [
@@ -98,10 +99,11 @@ class CursorTool(AITool):
         completion_check: CompletionCheck | None = None,
         node_id: str | None = None,
         prompt_dir: str | None = None,
+        temp_subdir: str | None = None,
         model: str | None = None,
     ) -> AIToolResult:
         prompt_file = save_node_prompt(
-            prompt, cwd, node_id=node_id, prompt_dir=prompt_dir
+            prompt, cwd, node_id=node_id, prompt_dir=prompt_dir, temp_subdir=temp_subdir
         )
         launch = launch_read_prompt(prompt_file, cwd=cwd)
         cli_flags = [

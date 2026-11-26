@@ -49,10 +49,11 @@ class CodexTool(AITool):
         *,
         node_id: str | None = None,
         prompt_dir: str | None = None,
+        temp_subdir: str | None = None,
         model: str | None = None,
     ) -> AIToolResult:
         prompt_file = save_node_prompt(
-            prompt, cwd, node_id=node_id, prompt_dir=prompt_dir
+            prompt, cwd, node_id=node_id, prompt_dir=prompt_dir, temp_subdir=temp_subdir
         )
         workspace = self._workspace_root(prompt_file, cwd)
         launch = _launch_read_prompt_oneline(prompt_file)
@@ -123,10 +124,11 @@ class CodexTool(AITool):
         completion_check: CompletionCheck | None = None,
         node_id: str | None = None,
         prompt_dir: str | None = None,
+        temp_subdir: str | None = None,
         model: str | None = None,
     ) -> AIToolResult:
         prompt_file = save_node_prompt(
-            prompt, cwd, node_id=node_id, prompt_dir=prompt_dir
+            prompt, cwd, node_id=node_id, prompt_dir=prompt_dir, temp_subdir=temp_subdir
         )
         workspace = self._workspace_root(prompt_file, cwd)
         launch = _launch_read_prompt_oneline(prompt_file)

@@ -28,6 +28,18 @@ RISK_ALIASES = {
     "高": "high",
 }
 
+RUN_MODE_ALIASES = {
+    "initial": "initial",
+    "first": "initial",
+    "首次": "initial",
+    "首轮": "initial",
+    "reopen": "reopen",
+    "change": "reopen",
+    "变更": "reopen",
+    "需求变更": "reopen",
+}
+
+
 @dataclass
 class RequirementMetadata:
     requirement_type: str = "unknown"
@@ -38,6 +50,10 @@ class RequirementMetadata:
     needs_clarification: bool = False
     open_questions_count: int = 0
     judgment_basis: str = ""
+    # initial = 首轮交付；reopen = 验收前变更轮次（与 requirement_type 正交）
+    run_mode: str = "initial"
+    change_version: str = ""
+    change_details: list[dict[str, str]] = field(default_factory=list)
 
     def to_state_updates(self) -> dict[str, Any]:
         return {
@@ -46,10 +62,16 @@ class RequirementMetadata:
             "change_scope": self.change_scope,
             "affected_modules": self.affected_modules,
             "compatibility_risk": self.compatibility_risk,
+            "run_mode": self.run_mode,
+            "change_version": self.change_version,
+            "change_details": list(self.change_details),
             "requirement_metadata": {
                 "needs_clarification": self.needs_clarification,
                 "open_questions_count": self.open_questions_count,
                 "judgment_basis": self.judgment_basis,
+                "run_mode": self.run_mode,
+                "change_version": self.change_version,
+                "change_details": list(self.change_details),
             },
         }
 
@@ -62,6 +84,25 @@ class RequirementMetadata:
         type_label = "新需求" if self.requirement_type == "new" else "老需求调整"
         if self.requirement_type == "unknown":
             type_label = "未识别"
+        run_label = "验收前变更" if self.run_mode == "reopen" else "首轮交付"
+        if self.change_details:
+            detail_lines = []
+            for item in self.change_details:
+                if not isinstance(item, dict):
+                    continue
+                cid = str(item.get("id") or "").strip() or "?"
+                summary = str(item.get("summary") or "").strip() or "（无摘要）"
+                line = f"- **{cid}**: {summary}"
+                hint = str(item.get("locate_hint") or "").strip()
+                anchor = str(item.get("anchor") or "").strip()
+                if hint:
+                    line += f"\n  - 落点提示: `{hint}`"
+                if anchor:
+                    line += f"\n  - 锚点: `{anchor}`"
+                detail_lines.append(line)
+            change_details_text = "\n".join(detail_lines) if detail_lines else "（无）"
+        else:
+            change_details_text = "（无）"
 
         return {
             "requirement_type": self.requirement_type,
@@ -73,6 +114,11 @@ class RequirementMetadata:
             "needs_clarification": str(self.needs_clarification).lower(),
             "open_questions_count": str(self.open_questions_count),
             "judgment_basis": self.judgment_basis,
+            "run_mode": self.run_mode,
+            "run_mode_label": run_label,
+            "change_version": self.change_version or "（无）",
+            "change_details": change_details_text,
+            "change_details_text": change_details_text,
         }
 
 
@@ -105,6 +151,13 @@ def _normalize_type(value: Any) -> str:
     return normalized
 
 
+def _normalize_run_mode(value: Any) -> str:
+    if value is None or str(value).strip() == "":
+        return "initial"
+    key = str(value).strip().lower()
+    return RUN_MODE_ALIASES.get(key, RUN_MODE_ALIASES.get(str(value).strip(), "initial"))
+
+
 def _normalize_risk(value: Any) -> str:
     if value is None:
         return "unknown"
@@ -121,9 +174,53 @@ def _as_str_list(value: Any) -> list[str]:
     return [str(value)]
 
 
+def _as_change_details(value: Any) -> list[dict[str, str]]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        text = value.strip()
+        return [{"id": "C1", "summary": text, "locate_hint": "", "anchor": ""}] if text else []
+    if not isinstance(value, list):
+        return []
+    details: list[dict[str, str]] = []
+    for idx, item in enumerate(value, start=1):
+        if isinstance(item, str):
+            details.append(
+                {
+                    "id": f"C{idx}",
+                    "summary": item.strip(),
+                    "locate_hint": "",
+                    "anchor": "",
+                }
+            )
+            continue
+        if not isinstance(item, dict):
+            continue
+        details.append(
+            {
+                "id": str(item.get("id") or f"C{idx}").strip(),
+                "summary": str(
+                    item.get("summary") or item.get("detail") or item.get("desc") or ""
+                ).strip(),
+                "locate_hint": str(
+                    item.get("locate_hint")
+                    or item.get("impact_hint")
+                    or item.get("locate")
+                    or ""
+                ).strip(),
+                "anchor": str(item.get("anchor") or item.get("location") or "").strip(),
+            }
+        )
+    return details
+
+
 def _from_yaml(data: dict[str, Any]) -> RequirementMetadata:
     if "requirement_metadata" in data and isinstance(data["requirement_metadata"], dict):
         data = data["requirement_metadata"]
+
+    change_version = str(data.get("change_version") or "").strip().lower()
+    if change_version and not change_version.startswith("v"):
+        change_version = f"v{change_version}"
 
     return RequirementMetadata(
         requirement_type=_normalize_type(data.get("requirement_type")),
@@ -134,6 +231,9 @@ def _from_yaml(data: dict[str, Any]) -> RequirementMetadata:
         needs_clarification=bool(data.get("needs_clarification", False)),
         open_questions_count=int(data.get("open_questions_count", 0) or 0),
         judgment_basis=str(data.get("judgment_basis", "")).strip(),
+        run_mode=_normalize_run_mode(data.get("run_mode")),
+        change_version=change_version,
+        change_details=_as_change_details(data.get("change_details")),
     )
 
 

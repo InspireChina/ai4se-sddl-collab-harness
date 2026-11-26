@@ -24,6 +24,7 @@ usage() {
   -d, --docs-dir DIR  覆盖完整产出目录（相对应用根或绝对路径）
   --auto                无人值守：禁止向用户提问，内容就绪后自动过门禁
   --fresh               清除已有产出（保留 00-requirement.md）后重来
+  --reopen              验收前变更：读 changes/change-vN.md，按差异覆盖原产出（与 --fresh 互斥）
   -h, --help          显示帮助
 
 依赖安装请用 ./init_env.sh，本脚本不会执行 pip install。
@@ -38,6 +39,9 @@ usage() {
 
   # 续跑：已有 spec/jwt-login/00-requirement.md 时可只传 --name
   ./start.sh --name jwt-login
+
+  # 验收前变更（通常由 sddl reopen 转入）
+  ./start.sh --reopen --name jwt-login
 
   # 直接传需求文本
   ./start.sh --tool echo "实现用户登录功能，支持 JWT 认证"
@@ -96,6 +100,7 @@ REQ_FILE=""
 REQ_TEXT=()
 AUTO_MODE=0
 FRESH=0
+REOPEN=0
 REQ_FILE=""
 REQ_TEXT=()
 
@@ -111,6 +116,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --fresh)
       FRESH=1
+      shift
+      ;;
+    --reopen)
+      REOPEN=1
       shift
       ;;
     -t|--tool)
@@ -186,9 +195,18 @@ if ! package_installed; then
 fi
 echo "==> 依赖已安装（安装请用 ./init_env.sh，此处不执行 pip install）"
 
+if [[ "$FRESH" -eq 1 && "$REOPEN" -eq 1 ]]; then
+  die "--fresh 与 --reopen 互斥"
+fi
+
 # ---------- default requirement ----------
-# 续跑只传 --name：交给 run.py 读取 spec/<name>/00-requirement.md
-if [[ -z "$REQ_FILE" && ${#REQ_TEXT[@]} -eq 0 && -z "$REQ_NAME" ]]; then
+# reopen：必须有 --name 或 --docs-dir（读 changes/change-vN.md）
+if [[ "$REOPEN" -eq 1 ]]; then
+  if [[ -z "$REQ_NAME" && -z "$DOCS_DIR" ]]; then
+    die "reopen 必须提供 --name（或 --docs-dir）"
+  fi
+elif [[ -z "$REQ_FILE" && ${#REQ_TEXT[@]} -eq 0 && -z "$REQ_NAME" ]]; then
+  # 续跑只传 --name：交给 run.py 读取 spec/<name>/00-requirement.md
   DEFAULT_REQ="../spec/requirements/jwt-login-requirement.md"
   if [[ -f "$DEFAULT_REQ" ]]; then
     echo "==> 未传需求，使用默认: $DEFAULT_REQ"
@@ -200,7 +218,9 @@ fi
 
 # ---------- build run.py args ----------
 RUN_ARGS=()
-if [[ -n "$REQ_FILE" ]]; then
+if [[ "$REOPEN" -eq 1 ]]; then
+  RUN_ARGS+=(--reopen)
+elif [[ -n "$REQ_FILE" ]]; then
   [[ -f "$REQ_FILE" ]] || die "需求文件不存在: $REQ_FILE"
   RUN_ARGS+=(--file "$REQ_FILE")
 elif [[ ${#REQ_TEXT[@]} -gt 0 ]]; then
@@ -225,7 +245,11 @@ fi
 if [[ "$FRESH" -eq 1 ]]; then
   RUN_ARGS+=(--fresh)
 fi
-echo "==> 启动 workflow"
+if [[ "$REOPEN" -eq 1 ]]; then
+  echo "==> 启动 reopen workflow"
+else
+  echo "==> 启动 workflow"
+fi
 echo "    $VENV_PY run.py ${RUN_ARGS[*]}"
 echo
 

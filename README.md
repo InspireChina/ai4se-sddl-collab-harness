@@ -12,6 +12,7 @@
 4. [内置 Skill](#4-内置-skill)
 5. [公共文档](#5-公共文档)
 6. [断点续跑](#6-断点续跑)
+7. [验收前需求变更（reopen）](#7-验收前需求变更-reopen)
 
 ---
 
@@ -36,6 +37,10 @@ sddl init              # 生成配置，填写 project_docs_dir
 sddl start --file "/path/to/prd.md" --name login
 sddl start --name login --auto          # 无人值守
 sddl start --name login                 # 续跑（不要加 --fresh）
+
+# 验收前需求变更（保留旧产出，按差异从需求分析起推进）
+sddl reopen --name login
+# 等价于引擎目录: python run.py --reopen --name login
 ```
 
 | 开关 | 作用 |
@@ -43,7 +48,7 @@ sddl start --name login                 # 续跑（不要加 --fresh）
 | `--file` | 需求文件 |
 | `--name` | 需求目录名 → `spec/<name>/` |
 | `--auto` | 无人值守 |
-| `--fresh` | 清空该需求产出后重来（与续跑互斥） |
+| `--fresh` | 清空该需求产出后重来（与续跑 / reopen 互斥） |
 | `--tool` / `--model` | 可选；覆盖**全部**节点。不传则用业务 `workflow-local.yaml` |
 
 需要拼启动命令时用内置 [start-workflow](#41-start-workflow) skill，命令在**终端**执行。
@@ -155,6 +160,12 @@ nodes:
 
 **硬约束**：只准备命令，**禁止**在当前 AI session 里执行 `sddl start`。你复制命令到业务项目根的终端再跑。
 
+### 4.2 `reopen-workflow`
+
+**作用**：收集变更点 → 写入 `spec/<name>/changes/change-vN.md` → 拼好 `sddl reopen ...` 命令。
+
+**硬约束**：只写 change 文件并准备命令，**禁止**在当前 AI session 里执行 `sddl reopen`。详见 [§7](#7-验收前变更-reopen)。
+
 ---
 
 ## 5. 公共文档
@@ -167,7 +178,8 @@ nodes:
   common_extend_rules/          # 公共扩展规则
   repos/<仓库名>/extend_rules/  # 仓库扩展规则
   spec/<需求名>/
-    requirements/               # 01-requirements.md
+    requirements/               # 01-requirements.md（reopen 有差异时直接覆盖）
+    changes/                    # change-vN.md 变更点清单
     intent/                     # 本地意图缓存（不提交）
     plan/                       # 计划、用例报告 + attachments/
     task/                       # 任务
@@ -194,5 +206,38 @@ nodes:
 | 终端进程还在 | 对话里完成澄清/审批即可，勿再 start |
 | 进程已退出 | `sddl start --name <同名>` |
 | 要推倒重来 | 加 `--fresh`（会清空该需求阶段产出，含 `intent/`） |
+| 验收前需求变更 | 见 [§7 reopen](#7-验收前需求变更-reopen) |
 
 续跑依据：已有定稿/approval 与文末 Workflow 状态；有本地 `intent/02-intent-local.md` 则跳过意图识别。编码段未写对应 `*_approval.approved` 时不会跳步。
+
+---
+
+## 7. 验收前变更（reopen）
+
+适用：同一 `spec/<name>` **尚未验收**，中途业务/方案/实现有变。保留旧产出，按变更点逐节点快检。
+
+### 步骤
+
+1. 用 skill **`reopen-workflow`**：卡号须能对上已有 `spec/<name>/`；收集变更点（对话已有则直接用，否则再问）；写入 `changes/change-vN.md`（只写白话变更点，不编造落点/编号）。
+2. 业务根执行 skill 给出的命令（或手动）：
+
+```bash
+sddl reopen --name <同名>
+```
+
+### 行为摘要
+
+| 项 | 说明 |
+|----|------|
+| 入口 | skill `reopen-workflow` 写 change → `sddl reopen`（内部 = `start.sh --reopen`） |
+| 提示词 | 原 `*.md`/`*.auto.md` + 注入 `reopen_inject.md` |
+| 全链路 | 需求→plan→用例→任务→编码→测试→review→提交，逐节点对照变更点 |
+| 启动复位 | **尚无节点复核过本 change** 时：所有已存在阶段 md 的 approval 打回 `pending` |
+| 进度 | `change_status` 仍记 `status` / `last_node` / `all_docs_updated`（仅状态，不驱动续跑） |
+| 续跑 | 各节点 md 的 `reopen_impact.reviewed_changes`（仅 `changes/change-vN.md`）；再次 reopen 从**尚未复核本 change** 的最早节点接着跑 |
+| 复核范围 | 进入节点时若已有阶段文档则注入 reopen；没有则常规交付。凡本轮 change 会话产出的节点，引擎都会写入 `reopen_impact.reviewed_changes` 供续跑 |
+| 临时提示词 | 首轮：`temp-prompts/<node>.prompt.md`；reopen 复核中：`temp-prompts/change-vN/<node>.prompt.md`（不覆盖首轮） |
+| 覆盖方式 | 有差异时**直接覆盖该节点原文件**（不另建版本副本）；`changes/` 仅存变更点清单 |
+| 上游透传 | 下一节点注入上一节点的 `reopen_impact`，便于快速定位 |
+| 意图 | 有缓存则沿用；没有则跑意图识别 |
+| 加速 | 无差异 `impact: none` 且无需澄清 → 直接推进；`patch` 才失效下游 approval |

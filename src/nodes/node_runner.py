@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 from ..agents.base import AIToolResult
-from ..agents.prompt_file import TEMP_PROMPT_DIR, save_node_prompt
+from ..agents.prompt_file import TEMP_PROMPT_DIR, save_node_prompt, temp_prompts_anchor
 from ..agents.registry import get_ai_tool
 from ..agents.subagent_delegation import (
     testcase_delegation,
@@ -60,6 +60,7 @@ from ..phase_gate import (
     phase_complete,
     phase_content_ready,
     plan_session_complete,
+    requirements_logical_name,
     resolve_doc_path,
 )
 from ..state import DevWorkflowState
@@ -169,23 +170,40 @@ class NodeRunner:
             state = {**state, **hydrated}
 
         auto = bool(state.get("auto"))
+        from ..reopen import reopen_applies_to_node
+
+        reopen_session = str(state.get("run_mode") or "") == "reopen"
+        reopen = reopen_applies_to_node(state, docs_dir, node_id)
+        if reopen_session and not reopen and node_id != "identify_intent":
+            # 首轮无此节点产出：后续按常规交付，不再注入 reopen
+            logger.info(
+                "reopen：节点 [%s] 首轮无阶段文档 → 切换为常规交付（不注入 reopen）",
+                node_cfg.name,
+            )
+            state = {**state, "run_mode": "initial"}
         prompt_rel = node_cfg.resolve_prompt_file(auto)
         prompt_template = self._load_prompt(prompt_rel)
         context = self._build_context(node_cfg, state, docs_dir)
         prompt = self._render_prompt(prompt_template, context)
+        if reopen:
+            prompt = self._with_reopen_inject(prompt, context)
         logger.info(
-            "节点 [%s] 使用 prompt %s（%s）",
+            "节点 [%s] 使用 prompt %s（%s%s）",
             node_cfg.name,
             prompt_rel,
             "无人值守" if auto else "人工介入",
+            " +reopen注入" if reopen else "",
         )
         if node_id == "identify_intent":
-            return self._run_identify_intent(node_cfg, docs_dir, prompt)
+            return self._run_identify_intent(node_cfg, docs_dir, prompt, state)
 
         tool = get_ai_tool(node_cfg.tool)
         agent_cwd = self._agent_cwd(node_id)
+        output_logical = node_cfg.output_file
+        if node_id == "analyze_requirements":
+            output_logical = requirements_logical_name(state)
         output_path = write_output_path(
-            docs_dir, node_cfg.output_file, str(state.get("delivery_role") or "")
+            docs_dir, output_logical, str(state.get("delivery_role") or "")
         )
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -208,6 +226,9 @@ class NodeRunner:
             effective_model or "(tool默认)",
             "interactive" if interactive else "headless",
         )
+        from ..reopen import change_temp_subdir
+
+        temp_subdir = change_temp_subdir(state)
         if node_cfg.tool in (
             "cursor",
             "claude_code",
@@ -215,11 +236,16 @@ class NodeRunner:
             "oh_my_pi",
             "omp",
         ):
+            rel = (
+                f"temp-prompts/{temp_subdir}/{node_id}.prompt.md"
+                if temp_subdir
+                else f"temp-prompts/{node_id}.prompt.md"
+            )
             logger.info(
-                "%s 将把渲染后的 prompt 写入 %s/temp-prompts/%s.prompt.md",
+                "%s 将把渲染后的 prompt 写入 %s/%s",
                 node_cfg.tool,
                 docs_dir,
-                node_id,
+                rel,
             )
 
         if interactive and not sys.stdin.isatty():
@@ -235,6 +261,7 @@ class NodeRunner:
                 completion_check=completion_check,
                 node_id=node_id,
                 prompt_dir=str(docs_dir),
+                temp_subdir=temp_subdir or None,
                 model=effective_model or None,
             )
             # 交互结束仍未过门禁时打日志，避免「已 approved 却停住」难排查
@@ -246,7 +273,7 @@ class NodeRunner:
                     node_cfg.name,
                 )
             content, result = self._resolve_interactive_content(
-                docs_dir, output_path, node_id, result
+                docs_dir, output_path, node_id, result, state=state
             )
         else:
             result = tool.run(
@@ -254,6 +281,7 @@ class NodeRunner:
                 cwd=str(agent_cwd),
                 node_id=node_id,
                 prompt_dir=str(docs_dir),
+                temp_subdir=temp_subdir or None,
                 model=effective_model or None,
             )
             content, result = self._resolve_headless_content(
@@ -261,9 +289,14 @@ class NodeRunner:
             )
 
         role_now = str(state.get("delivery_role") or "")
+        lookup_logical = (
+            requirements_logical_name(state)
+            if node_id == "analyze_requirements"
+            else node_cfg.output_file
+        )
         found_output = find_output(
             docs_dir,
-            node_cfg.output_file,
+            lookup_logical,
             role_now if role_now and role_now != "unknown" else None,
         )
         if found_output is not None:
@@ -282,8 +315,13 @@ class NodeRunner:
             },
             "completed_nodes": [node_id],
         }
+        if reopen_session and not reopen:
+            updates["run_mode"] = "initial"
         updates.update(hydrated)
         updates.update(self._parse_node_outputs(node_id, content, docs_dir, state, output_path))
+        # 若 _parse 在 reopen 节点上又写回 run_mode=reopen，绿通节点以 initial 为准
+        if reopen_session and not reopen:
+            updates["run_mode"] = "initial"
 
         merged_state = {**state, **updates}
         workflow_status = self._build_workflow_status(
@@ -298,6 +336,7 @@ class NodeRunner:
                 body_content=content,
                 result=result,
                 status=workflow_status,
+                state=merged_state,
             )
         else:
             self._finalize_headless_outputs(
@@ -307,7 +346,13 @@ class NodeRunner:
                 body_content=content,
                 result=result,
                 status=workflow_status,
+                state=merged_state,
             )
+
+        # finalize 会剥离并重写 Workflow 状态；在其后再次打戳，避免 reviewed_changes 被裁掉
+        self._stamp_change_reviewed_outputs(
+            node_id, docs_dir, merged_state, output_path
+        )
 
         logger.info(
             "节点 [%s] 输出已写入 %s（next=%s）",
@@ -327,10 +372,16 @@ class NodeRunner:
         output_path: Path,
         node_id: str,
         result,
+        state: DevWorkflowState | None = None,
     ) -> tuple[str, object]:
         cfg = get_phase_config(node_id)
         if cfg:
-            final = find_output(docs_dir, cfg.final_file)
+            logical = (
+                requirements_logical_name(state or {})
+                if node_id == "analyze_requirements"
+                else cfg.final_file
+            )
+            final = find_output(docs_dir, logical)
             if final is not None:
                 text = final.read_text(encoding="utf-8").strip()
                 if text:
@@ -397,12 +448,20 @@ class NodeRunner:
         body_content: str,
         result,
         status: WorkflowStatus,
+        state: DevWorkflowState | None = None,
     ) -> None:
         """headless：若 Agent 已写文件则只补状态表，避免用 stdout 摘要覆盖正文。"""
         cfg = get_phase_config(node_cfg.node_id)
         target = output_path
         if cfg:
-            final_path = find_output(docs_dir, cfg.final_file)
+            st = state or {}
+            logical = self._output_logical(node_cfg.node_id, st, cfg.final_file)
+            role = str(st.get("delivery_role") or "")
+            final_path = find_output(
+                docs_dir,
+                logical,
+                role if role and role != "unknown" else None,
+            )
             if final_path is not None:
                 target = final_path
 
@@ -440,12 +499,17 @@ class NodeRunner:
         if output_path is not None and role_from_filename(output_path.name):
             role = role_from_filename(output_path.name) or role
         if cfg:
+            lookup_file = (
+                requirements_logical_name(state)
+                if node_id == "analyze_requirements"
+                else cfg.final_file
+            )
             final_path = (
                 output_path
                 if output_path is not None and output_path.exists()
                 else find_output(
                     docs_dir,
-                    cfg.final_file,
+                    lookup_file,
                     role if role and role != "unknown" else None,
                 )
             )
@@ -453,8 +517,14 @@ class NodeRunner:
                 final_content = final_path.read_text(encoding="utf-8")
                 if node_id == "analyze_requirements":
                     metadata = parse_requirement_metadata(final_content)
-                    if metadata.requirement_type:
+                    if metadata.requirement_type or metadata.run_mode:
                         updates.update(metadata.to_state_updates())
+                    # reopen 轮次保持 requirements_doc / change_version
+                    if str(state.get("run_mode") or "") == "reopen":
+                        updates["run_mode"] = "reopen"
+                        updates["requirements_doc"] = requirements_logical_name(state)
+                        if state.get("change_version"):
+                            updates["change_version"] = str(state["change_version"])
                 approval_parser = {
                     "analyze_requirements": parse_requirement_approval,
                     "design_test_cases": parse_test_cases_approval,
@@ -486,6 +556,115 @@ class NodeRunner:
                 if checklist.items:
                     updates.update(checklist.to_state())
 
+                # 本轮 change 会话：无论是否仍注入 reopen，都打 reviewed_changes 供续跑
+                # （finalize 之后还会再打一次，防止 Workflow 状态剥离把追加块裁掉）
+                change_file = str(
+                    (state.get("node_outputs") or {}).get("change_file") or ""
+                )
+                from_change_session = bool(change_file) or bool(
+                    str(state.get("change_version") or "").strip()
+                )
+                if from_change_session:
+                    self._stamp_change_reviewed_outputs(
+                        node_id, docs_dir, state, final_path
+                    )
+
+                # reopen 注入节点：无影响快过、patch 级联、进度
+                if str(state.get("run_mode") or "") == "reopen":
+                    from ..reopen import (
+                        reopen_impact_is_none,
+                        reset_downstream_approvals,
+                        parse_reopen_impact,
+                        update_change_progress,
+                        next_reopen_frontier_exhausted,
+                    )
+                    from ..parsers.clarification_parser import (
+                        parse_clarification_checklist as _pcl,
+                    )
+
+                    final_content = final_path.read_text(encoding="utf-8")
+
+                    if (
+                        cfg.requires_approval
+                        and not updates.get(state_key)
+                        and reopen_impact_is_none(final_content)
+                    ):
+                        cl = _pcl(final_content)
+                        if cl.all_resolved or not cl.items or state.get("auto"):
+                            updates[state_key] = True
+
+                    impact = parse_reopen_impact(final_content)
+                    impact_val = str(impact.get("impact") or "").strip().lower()
+                    if impact_val and impact_val not in {
+                        "none",
+                        "no",
+                        "无",
+                        "无影响",
+                    }:
+                        role_for_reset = str(
+                            updates.get("delivery_role")
+                            or state.get("delivery_role")
+                            or ""
+                        )
+                        reset_downstream_approvals(
+                            docs_dir, role=role_for_reset, after_node=node_id
+                        )
+
+                    if change_file:
+                        change_path = Path(change_file)
+                        if not change_path.is_absolute():
+                            app_root = Path(str(state.get("app_root") or "."))
+                            change_path = app_root / change_path
+                        role_now = str(
+                            updates.get("delivery_role")
+                            or state.get("delivery_role")
+                            or ""
+                        )
+                        frontier_done = next_reopen_frontier_exhausted(
+                            docs_dir, node_id, role=role_now
+                        )
+                        commit_done = node_id == "commit_code" and bool(
+                            updates.get(state_key) or state.get(state_key)
+                        )
+                        # 首轮已有文档复核完 ≠ change 整单完成；后面常规节点仍靠 reviewed_changes 续跑
+                        update_change_progress(
+                            change_path,
+                            status="completed" if commit_done else "in_progress",
+                            last_node=node_id,
+                            all_docs_updated=frontier_done or commit_done,
+                            note=(
+                                "prior docs revisited; continuing initial for new stages"
+                                if frontier_done and not commit_done
+                                else (
+                                    "all stage docs done"
+                                    if commit_done
+                                    else f"node {node_id} reviewed; resume by node md"
+                                )
+                            ),
+                        )
+                elif from_change_session and change_file:
+                    # 已切常规交付：仍推进 change_status / last_node，便于 reopen 续跑定位
+                    from ..reopen import update_change_progress
+
+                    change_path = Path(change_file)
+                    if not change_path.is_absolute():
+                        app_root = Path(str(state.get("app_root") or "."))
+                        change_path = app_root / change_path
+                    commit_done = node_id == "commit_code" and bool(
+                        updates.get(state_key) or state.get(state_key)
+                    )
+                    update_change_progress(
+                        change_path,
+                        status="completed" if commit_done else "in_progress",
+                        last_node=node_id,
+                        all_docs_updated=True,
+                        note=(
+                            "completed after initial tail"
+                            if commit_done
+                            else f"initial-tail node {node_id}; resume by reviewed_changes"
+                        ),
+                    )
+
         if node_id == "verify_tests":
             report_role = str(updates.get("delivery_role") or state.get("delivery_role") or "")
             report_path = find_output(
@@ -507,6 +686,7 @@ class NodeRunner:
         node_cfg: NodeConfig,
         docs_dir: Path,
         prompt: str,
+        state: DevWorkflowState | None = None,
     ) -> DevWorkflowState:
         """扫仓库并请用户确认。结论写入 intent/（本地不提交）并进入本次 state。"""
         result_path = _intent_result_path(docs_dir)
@@ -534,6 +714,9 @@ class NodeRunner:
         def confirmed() -> bool:
             return bool(_read_confirmed_intent(result_path, started))
 
+        from ..reopen import change_temp_subdir
+
+        temp_subdir = change_temp_subdir(state or {}) or None
         if interactive:
             result = tool.run_interactive(
                 prompt=prompt,
@@ -541,6 +724,7 @@ class NodeRunner:
                 completion_check=confirmed,
                 node_id=node_cfg.node_id,
                 prompt_dir=str(docs_dir),
+                temp_subdir=temp_subdir,
                 model=effective_model or None,
             )
             if not confirmed():
@@ -551,6 +735,7 @@ class NodeRunner:
                 cwd=str(agent_cwd),
                 node_id=node_cfg.node_id,
                 prompt_dir=str(docs_dir),
+                temp_subdir=temp_subdir,
                 model=effective_model or None,
             )
 
@@ -617,12 +802,17 @@ class NodeRunner:
         body_content: str,
         result,
         status: WorkflowStatus,
+        state: DevWorkflowState | None = None,
     ) -> None:
         """交互节点：Agent 直接写文件，程序只补 header（若缺失）与状态表。"""
         cfg = get_phase_config(node_cfg.node_id)
         paths: list[Path] = [output_path]
+        found = None
         if cfg:
-            found = find_output(docs_dir, cfg.final_file)
+            logical = self._output_logical(
+                node_cfg.node_id, state or {}, cfg.final_file
+            )
+            found = find_output(docs_dir, logical)
             paths = [found] if found is not None else [output_path]
 
         for path in paths:
@@ -783,13 +973,66 @@ class NodeRunner:
             body_content=content,
             result=result,
             status=status,
+            state=merged,
+        )
+        self._stamp_change_reviewed_outputs(
+            node_id, docs_dir, merged, output_path
         )
         return updates
 
+    @staticmethod
+    def _change_review_refs(state: DevWorkflowState) -> list[str]:
+        from ..reopen import change_doc_ref
+
+        change_file = str(
+            (state.get("node_outputs") or {}).get("change_file") or ""
+        )
+        ver = str(state.get("change_version") or "").strip()
+        change_name = Path(change_file).name if change_file else ""
+        if change_name:
+            return [change_doc_ref(change_name)]
+        if ver:
+            return [change_doc_ref(ver)]
+        return []
+
+    def _stamp_change_reviewed_outputs(
+        self,
+        node_id: str,
+        docs_dir: Path,
+        state: DevWorkflowState,
+        output_path: Path | None = None,
+    ) -> None:
+        """把本轮 change 写入节点 md 的 reopen_impact.reviewed_changes。"""
+        review_refs = self._change_review_refs(state)
+        if not review_refs:
+            return
+        from ..reopen import write_reviewed_changes
+
+        role = str(state.get("delivery_role") or "")
+        role_arg = role if role and role != "unknown" else None
+        paths: list[Path] = []
+        cfg = get_phase_config(node_id)
+        if cfg:
+            logical = self._output_logical(node_id, state, cfg.final_file)
+            found = find_output(docs_dir, logical, role_arg)
+            if found is not None and found.is_file():
+                paths.append(found)
+        if output_path is not None and output_path.is_file() and output_path not in paths:
+            paths.append(output_path)
+        for path in paths:
+            write_reviewed_changes(path, review_refs)
+        if node_id == "plan_session":
+            tc = find_output(docs_dir, "02-test-cases.md", role_arg)
+            if tc is not None and tc.is_file():
+                write_reviewed_changes(tc, review_refs)
+
     def _testcase_delegation_block(self, state: DevWorkflowState) -> str:
         docs_dir = self._resolve_docs_dir(state)
-        # 与主提示词一致：路径相对 temp-prompts/（提示词文件所在目录）
-        anchor = docs_dir / TEMP_PROMPT_DIR
+        from ..reopen import change_temp_subdir
+
+        temp_subdir = change_temp_subdir(state) or None
+        # 与主提示词一致：路径相对提示词所在目录（temp-prompts 或 temp-prompts/change-vN）
+        anchor = temp_prompts_anchor(docs_dir, temp_subdir=temp_subdir)
         agent_cwd = self._agent_cwd("design_test_cases")
         output_path = write_output_path(
             docs_dir, "02-test-cases.md", str(state.get("delivery_role") or "")
@@ -805,6 +1048,7 @@ class NodeRunner:
             str(agent_cwd),
             node_id="design_test_cases",
             prompt_dir=str(docs_dir),
+            temp_subdir=temp_subdir,
         )
         prompt_rel = _prompt_rel_path(prompt_file, Path(agent_cwd))
         return testcase_delegation(
@@ -815,8 +1059,29 @@ class NodeRunner:
         node_cfg = self.workflow_config.nodes[node_id]
         docs_dir = self._resolve_docs_dir(state)
         auto = bool(state.get("auto"))
+        from ..reopen import reopen_applies_to_node
+
+        reopen = reopen_applies_to_node(state, docs_dir, node_id)
         template = self._load_prompt(node_cfg.resolve_prompt_file(auto))
-        return self._render_prompt(template, self._build_context(node_cfg, state, docs_dir))
+        context = self._build_context(node_cfg, state, docs_dir)
+        prompt = self._render_prompt(template, context)
+        if reopen:
+            prompt = self._with_reopen_inject(prompt, context)
+        return prompt
+
+    def _with_reopen_inject(self, prompt: str, context: dict[str, str]) -> str:
+        """reopen：在普通/auto 提示词前注入共用片段；过渡说明写在 inject 末尾。"""
+        from ..reopen import reopen_inject_path
+
+        inject = self._render_prompt(self._load_prompt(reopen_inject_path()), context)
+        # inject 末尾已含「以下是本节点常规阶段提示词」过渡段，直接拼接原提示词
+        return inject.rstrip() + "\n\n" + prompt.lstrip()
+
+    @staticmethod
+    def _output_logical(node_id: str, state: DevWorkflowState, fallback: str) -> str:
+        if node_id == "analyze_requirements":
+            return requirements_logical_name(state)
+        return fallback
 
     def _load_prompt(self, prompt_file: str) -> str:
         path = self.project_root / prompt_file
@@ -836,9 +1101,12 @@ class NodeRunner:
             app_root,
             self.workflow_config.project_docs_dir,
         )
-        # 文档路径相对「本提示词所在目录 temp-prompts/」，Agent 按提示词文件目录解析，勿按 cwd
+        # 文档路径相对「本提示词所在目录」，Agent 按提示词文件目录解析，勿按 cwd
+        from ..reopen import change_temp_subdir
+
         cfg = get_phase_config(node_cfg.node_id)
-        anchor_dir = docs_dir / TEMP_PROMPT_DIR
+        temp_subdir = change_temp_subdir(state) or None
+        anchor_dir = temp_prompts_anchor(docs_dir, temp_subdir=temp_subdir)
         anchor_dir.mkdir(parents=True, exist_ok=True)
 
         def docs_rel(path: Path | str) -> str:
@@ -882,23 +1150,114 @@ class NodeRunner:
             ),
         }
 
+        req_logical = requirements_logical_name(state)
         if cfg:
-            context["final_output_path"] = hint(cfg.final_file)
+            final_logical = (
+                req_logical
+                if node_cfg.node_id == "analyze_requirements"
+                else cfg.final_file
+            )
+            context["final_output_path"] = hint(final_logical)
         else:
-            context["final_output_path"] = docs_rel(docs_dir / "01-requirements.md")
+            context["final_output_path"] = docs_rel(
+                docs_dir / "requirements" / req_logical
+            )
         context["intent_result_path"] = docs_rel(_intent_result_path(docs_dir))
+        context["requirements_doc"] = req_logical
+        context["baseline_requirements_doc"] = hint("01-requirements.md")
+        context["run_mode"] = str(state.get("run_mode") or "initial")
+        context["change_version"] = str(state.get("change_version") or "")
+        change_outputs = state.get("node_outputs") or {}
+        change_file_state = str(change_outputs.get("change_file") or "").strip()
+        ver = str(state.get("change_version") or "v1")
+        if not ver.startswith("v"):
+            ver = f"v{ver}"
+        if change_file_state:
+            change_path = Path(change_file_state)
+            if not change_path.is_absolute():
+                change_path = (
+                    resolve_project_docs_dir(
+                        app_root, self.workflow_config.project_docs_dir
+                    )
+                    / change_file_state
+                )
+        else:
+            change_path = docs_dir / "changes" / f"change-{ver}.md"
+        context["change_doc"] = f"`{docs_rel(change_path)}`"
+        meta_extra = state.get("requirement_metadata") or {}
+        context["primary_layer"] = str(
+            meta_extra.get("primary_layer")
+            or state.get("primary_layer")
+            or "mixed"
+        )
+        details = state.get("change_details") or []
+        if details:
+            from ..reopen import ChangeDetail
+
+            detail_objs: list[ChangeDetail] = []
+            for item in details:
+                if isinstance(item, str):
+                    text = item.strip()
+                    if text:
+                        detail_objs.append(ChangeDetail(summary=text))
+                    continue
+                if not isinstance(item, dict):
+                    continue
+                detail_objs.append(
+                    ChangeDetail(
+                        id=str(item.get("id") or "").strip(),
+                        summary=str(
+                            item.get("summary")
+                            or item.get("detail")
+                            or item.get("desc")
+                            or ""
+                        ).strip(),
+                        locate_hint=str(item.get("locate_hint") or "").strip(),
+                        anchor=str(item.get("anchor") or "").strip(),
+                    )
+                )
+            # 无 id 时只输出白话摘要，不要编造 "?"
+            from ..reopen import ReopenTarget
+
+            stub = ReopenTarget(
+                path=change_path,
+                version=ver,
+                logical_name=change_path.name,
+                run_mode="reopen",
+                change_details=detail_objs,
+            )
+            text = stub.change_details_text()
+            context["change_details"] = text
+            context["change_details_text"] = text
+        else:
+            context["change_details"] = "（无）"
+            context["change_details_text"] = "（无）"
+
+        if str(state.get("run_mode") or "") == "reopen":
+            from ..reopen import load_upstream_reopen_impact
+
+            context["upstream_reopen_impact"] = load_upstream_reopen_impact(
+                docs_dir, node_cfg.node_id, state
+            )
+        else:
+            context["upstream_reopen_impact"] = ""
 
         for inp in node_cfg.inputs:
             if inp.kind == "state":
                 context[inp.key] = self._format_state_value(state.get(inp.key), inp.key)
             elif inp.kind == "doc":
-                doc_path = resolve_doc_path(docs_dir, inp.key, role)
+                doc_key = inp.key
+                if doc_key == "01-requirements.md" and str(state.get("run_mode") or "") == "reopen":
+                    doc_key = req_logical
+                doc_path = resolve_doc_path(docs_dir, doc_key, role)
                 doc_ref = _format_doc_ref(doc_path, anchor_dir)
                 slug = inp.key.replace(".md", "").replace("-", "_")
                 context[slug] = doc_ref
                 context[f"doc_{inp.key}"] = doc_ref
+                if doc_key != inp.key:
+                    context[f"doc_{doc_key}"] = doc_ref
 
-        if state.get("requirement_type"):
+        if state.get("requirement_type") or state.get("run_mode"):
             meta = RequirementMetadata(
                 requirement_type=state.get("requirement_type", "unknown"),
                 requirement_summary=state.get("requirement_summary", ""),
@@ -914,6 +1273,9 @@ class NodeRunner:
                 judgment_basis=(state.get("requirement_metadata") or {}).get(
                     "judgment_basis", ""
                 ),
+                run_mode=str(state.get("run_mode") or "initial"),
+                change_version=str(state.get("change_version") or ""),
+                change_details=list(state.get("change_details") or []),
             )
             context.update(meta.to_context())
 
@@ -928,6 +1290,7 @@ class NodeRunner:
             restrict_to_involved=restrict_rules_to_involved(
                 node_cfg.node_id, metadata_present
             ),
+            temp_subdir=temp_subdir,
         )
         context["ai_rules"] = build_ai_rules_prompt(
             references,

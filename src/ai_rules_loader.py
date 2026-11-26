@@ -162,9 +162,14 @@ def materialize_rule_references(
     *,
     involved_repos: list[str] | None = None,
     restrict_to_involved: bool = False,
+    temp_subdir: str | None = None,
 ) -> list[RuleReference]:
-    """只复制本节点要读的规则到 ``temp-prompts/references/``。"""
-    ref_dir = docs_dir / TEMP_PROMPT_DIR / REFERENCES_DIRNAME
+    """只复制本节点要读的规则到 ``temp-prompts/[subdir/]references/``。"""
+    base = docs_dir / TEMP_PROMPT_DIR
+    sub = (temp_subdir or "").strip().replace("\\", "/").strip("/")
+    if sub:
+        base = base / sub
+    ref_dir = base / REFERENCES_DIRNAME
     ref_dir.mkdir(parents=True, exist_ok=True)
 
     written: list[RuleReference] = []

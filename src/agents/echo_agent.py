@@ -15,6 +15,7 @@ class EchoTool(AITool):
         *,
         node_id: str | None = None,
         prompt_dir: str | None = None,
+        temp_subdir: str | None = None,
         model: str | None = None,
     ) -> AIToolResult:
         del model  # echo 无模型概念
@@ -36,6 +37,7 @@ class EchoTool(AITool):
         completion_check=None,
         node_id: str | None = None,
         prompt_dir: str | None = None,
+        temp_subdir: str | None = None,
         model: str | None = None,
     ) -> AIToolResult:
         del model

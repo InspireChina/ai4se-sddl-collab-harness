@@ -21,6 +21,12 @@ from .requirement_dir import (
     resolve_requirement_docs_dir,
     save_original_requirement,
 )
+from .reopen import (
+    reset_all_stage_approvals,
+    resolve_reopen_start,
+    resolve_reopen_target,
+    update_change_progress,
+)
 from .router import (
     clear_intent_cache,
     determine_start_node,
@@ -55,7 +61,10 @@ class DevWorkflow:
     def plan_session(self, state: DevWorkflowState) -> DevWorkflowState:
         """一次交互会话写计划并完成澄清。用例由该工具自己的后台 subagent 写。"""
         docs_dir = self._resolve_docs_path(state)
-        if plan_session_complete(docs_dir, state):
+        # reopen：必须进节点做差异判定，不能因旧 approved 整段跳过
+        if str(state.get("run_mode") or "") != "reopen" and plan_session_complete(
+            docs_dir, state
+        ):
             logger.info("计划已确认且用例已就绪，跳过计划会话")
             return {"current_node": "plan_session"}
 
@@ -120,9 +129,22 @@ class DevWorkflow:
 
     def _route_after_analyze(self, state: DevWorkflowState) -> str:
         docs_dir = self._resolve_docs_path(state)
-        if requirements_complete(docs_dir, state):
+        if not requirements_complete(docs_dir, state):
+            return END
+        # reopen：有 intent 缓存则跳过识别，直接 plan；无缓存则走 identify_intent
+        if str(state.get("run_mode") or "") == "reopen":
+            role = str(state.get("delivery_role") or "")
+            if (
+                role in ("backend", "frontend", "both")
+                and state.get("intent_approved")
+                and str(state.get("git_branch") or "").strip()
+                and state.get("involved_repos") is not None
+            ):
+                logger.info("reopen：沿用本地意图缓存 → plan_session")
+                return "plan_session"
+            logger.info("reopen：无有效意图缓存 → identify_intent")
             return "identify_intent"
-        return END
+        return "identify_intent"
 
     def _route_after_intent(self, state: DevWorkflowState) -> str:
         docs_dir = self._resolve_docs_path(state)
@@ -133,6 +155,10 @@ class DevWorkflow:
             return END
         if state.get("involved_repos") is None:
             return END
+        # reopen：固定从 plan 起逐节点差异判定，不按旧 approved 跳到编码段
+        if str(state.get("run_mode") or "") == "reopen":
+            logger.info("reopen：意图已确认 → plan_session（逐节点差异）")
+            return "plan_session"
         if is_workflow_complete(docs_dir, role=role):
             logger.info("Workflow 已完成（本次角色的 07-commit.md status=completed）")
             return END
@@ -223,6 +249,12 @@ class DevWorkflow:
             self._route_after_analyze,
             {
                 "identify_intent": "identify_intent",
+                "plan_session": "plan_session",
+                "split_tasks": "split_tasks",
+                "implement_code": "implement_code",
+                "verify_tests": "verify_tests",
+                "ai_review": "ai_review",
+                "commit_code": "commit_code",
                 END: END,
             },
         )
@@ -300,7 +332,11 @@ class DevWorkflow:
         source_file: Path | None = None,
         auto: bool = False,
         fresh: bool = False,
+        reopen: bool = False,
     ) -> DevWorkflowState:
+        if fresh and reopen:
+            raise ValueError("--fresh 与 reopen 互斥")
+
         app_root = self._resolve_app_root()
         resolved_docs_dir, requirement_slug = resolve_requirement_docs_dir(
             app_root,
@@ -319,9 +355,42 @@ class DevWorkflow:
                 path.unlink()
             clear_intent_cache(docs_path)
 
-        original_path = save_original_requirement(docs_path, requirement)
+        reopen_target = None
+        reopen_plan = None
+        if reopen:
+            reopen_target = resolve_reopen_target(docs_path)
+            requirement = reopen_target.path.read_text(encoding="utf-8")
+            original_path = docs_path / "00-requirement.md"
+            if not original_path.is_file():
+                raise ValueError(
+                    f"reopen 需要已有 {original_path.name}（首轮原始需求），目录: {docs_path}"
+                )
+        else:
+            original_path = save_original_requirement(docs_path, requirement)
         cached = None if fresh else load_cached_intent(docs_path)
-        start_node = determine_start_node(docs_path, auto=auto)
+        cached_role = str(cached["delivery_role"]) if cached else ""
+
+        if reopen:
+            reopen_plan = resolve_reopen_start(
+                reopen_target,
+                docs_path,
+                has_intent_cache=cached is not None,
+                role=cached_role,
+            )
+            start_node = reopen_plan.start_node
+            logger.info(
+                "reopen：%s（fresh=%s, reviewed_through=%s）→ %s",
+                reopen_plan.note,
+                reopen_plan.fresh,
+                reopen_plan.last_node or "-",
+                start_node,
+            )
+            if cached is None and start_node == "analyze_requirements":
+                logger.info(
+                    "reopen：未找到本地意图缓存，将在需求分析后进入 identify_intent"
+                )
+        else:
+            start_node = determine_start_node(docs_path, auto=auto)
 
         initial: DevWorkflowState = {
             "requirement": requirement,
@@ -339,6 +408,10 @@ class DevWorkflow:
             "change_scope": "",
             "affected_modules": [],
             "compatibility_risk": "",
+            "run_mode": "reopen" if reopen else "initial",
+            "change_version": "",
+            "change_details": [],
+            "requirements_doc": "01-requirements.md",
             "delivery_role": "unknown",
             "delivery_blocks": [],
             "role_basis": "",
@@ -360,9 +433,50 @@ class DevWorkflow:
             "test_passed": False,
             "last_error": None,
         }
-        cached_role = ""
+        if reopen_target is not None and reopen_plan is not None:
+            initial.update(
+                {
+                    "run_mode": "reopen",
+                    "change_version": reopen_target.version,
+                    "change_details": [d.to_dict() for d in reopen_target.change_details],
+                    "requirements_doc": "01-requirements.md",
+                    "requirement_type": reopen_target.requirement_type
+                    or "existing_change",
+                    "requirement_summary": reopen_target.requirement_summary,
+                    "change_scope": reopen_target.change_scope,
+                    "requirement_metadata": {
+                        "primary_layer": reopen_target.primary_layer or "mixed",
+                    },
+                    "node_outputs": {
+                        "original_requirement": path_for_state(original_path, app_root),
+                        "change_file": path_for_state(reopen_target.path, app_root),
+                    },
+                    "resume_from_node": start_node,
+                }
+            )
+            if reopen_plan.fresh:
+                # 本 change 首次开跑：已有阶段 md 一律 pending，强制全链路再检
+                touched = reset_all_stage_approvals(docs_path)
+                if touched:
+                    logger.info(
+                        "reopen 首次启动：已将 %d 个阶段文档 approval → pending",
+                        len(touched),
+                    )
+                update_change_progress(
+                    reopen_target.path,
+                    status="in_progress",
+                    last_node="",
+                    all_docs_updated=False,
+                    note="reopen started; all existing stage approvals reset to pending",
+                )
+            else:
+                # 续跑：保留已过节点的 approval / last_node，只标记仍在进行
+                update_change_progress(
+                    reopen_target.path,
+                    status="in_progress",
+                    note=f"reopen resume from {start_node} ({reopen_plan.note})",
+                )
         if cached:
-            cached_role = str(cached["delivery_role"])
             initial.update(
                 {
                     "delivery_role": cached_role,
@@ -375,9 +489,37 @@ class DevWorkflow:
                     "completed_nodes": ["identify_intent"],
                 }
             )
-        initial.update(
-            restore_state_from_docs(docs_path, role=cached_role, auto=auto)
-        )
+        restored = restore_state_from_docs(docs_path, role=cached_role, auto=auto)
+        if reopen:
+            if reopen_plan is not None and reopen_plan.fresh:
+                # 首次：清掉 restore 的 approved，避免旧首轮状态短路
+                for key in (
+                    "requirement_approved",
+                    "plan_approved",
+                    "test_cases_approved",
+                    "tasks_approved",
+                    "implementation_approved",
+                    "test_report_approved",
+                    "ai_review_approved",
+                    "commit_approved",
+                ):
+                    restored.pop(key, None)
+            # 续跑：保留 docs restore 的 approval，方便门禁判断已过阶段
+            if reopen_target is not None:
+                restored["run_mode"] = "reopen"
+                restored["change_version"] = reopen_target.version
+                restored["requirements_doc"] = "01-requirements.md"
+                restored["change_scope"] = reopen_target.change_scope
+                if reopen_target.requirement_type:
+                    restored["requirement_type"] = reopen_target.requirement_type
+                if reopen_target.change_details:
+                    restored["change_details"] = [
+                        d.to_dict() for d in reopen_target.change_details
+                    ]
+        initial.update(restored)
+        if reopen:
+            initial["run_mode"] = "reopen"
+            initial["resume_from_node"] = start_node
         return self._graph.invoke(initial)
 
 

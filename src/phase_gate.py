@@ -45,15 +45,30 @@ def delivery_role_from_docs(docs_dir: Path, state: DevWorkflowState) -> str:
     return ""
 
 
+def requirements_logical_name(state: DevWorkflowState | None = None) -> str:
+    """需求分析写入目标：始终是基线 ``01-requirements.md``（reopen 也是原地 patch）。
+
+    变更点在 ``changes/change-vN.md``，不另写需求版本文件。
+    """
+    state = state or {}
+    doc = str(state.get("requirements_doc") or "").strip()
+    if doc and not doc.startswith("change-") and "change-v" not in doc:
+        return doc
+    return "01-requirements.md"
+
+
 def _stage_file(docs_dir: Path, node_id: str, state: DevWorkflowState) -> Path | None:
     cfg = PHASE_CONFIGS.get(node_id)
     if not cfg:
         return None
     role = delivery_role_from_docs(docs_dir, state)
+    final_file = cfg.final_file
+    if node_id == "analyze_requirements":
+        final_file = requirements_logical_name(state)
     lookup = (
-        (role or None) if cfg.final_file in ROLE_SCOPED_OUTPUTS else None
+        (role or None) if final_file in ROLE_SCOPED_OUTPUTS else None
     )
-    return find_output(docs_dir, cfg.final_file, lookup)
+    return find_output(docs_dir, final_file, lookup)
 
 
 def resolve_doc_path(
@@ -279,6 +294,15 @@ def phase_complete(docs_dir: Path, node_id: str, state: DevWorkflowState) -> boo
     # --auto：内容就绪即过门禁，不等人写 approved
     if state.get("auto"):
         return True
+    # reopen：无影响或无需澄清时允许直接过门禁（状态仍须由节点写成 approved）
+    if str(state.get("run_mode") or "") == "reopen":
+        from .reopen import reopen_impact_is_none
+
+        final_path = _stage_file(docs_dir, node_id, state)
+        if final_path is not None and final_path.is_file():
+            content = final_path.read_text(encoding="utf-8")
+            if reopen_impact_is_none(content) and _checklist_ready(content, state):
+                return True
     return phase_user_approved(docs_dir, node_id, state)
 
 

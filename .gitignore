@@ -26,3 +26,5 @@ auth-service/data/*.db
 apps/auth-service/target/
 apps/auth-service/.env
 apps/auth-service/*.iml
+
+/.idea

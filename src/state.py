@@ -29,6 +29,15 @@ class DevWorkflowState(TypedDict, total=False):
     change_scope: str
     affected_modules: list[str]
     compatibility_risk: str  # low | medium | high | unknown
+    # initial = 首轮；reopen = 验收前变更（与 requirement_type 正交）
+    run_mode: str
+    change_version: str  # v1 / v2 …
+    change_details: list[dict]
+    # 需求分析写入目标（reopen 仍为 01-requirements.md，原地 patch）
+    requirements_doc: str
+    # 本轮变更点文件，如 changes/change-v1.md
+    change_doc: str
+    primary_layer: str
     # 本次启动确认的角色；确认后写入 intent/02-intent-local.md（本地不提交），续跑直接读取。前后端各走各的计划、任务和代码。
     delivery_role: str  # backend | frontend | both | unknown
     delivery_blocks: list[str]  # backend / frontend
