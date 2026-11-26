@@ -145,6 +145,7 @@ _APP_ROOT_NODES = frozenset(
         "identify_intent",
         "plan_session",
         "design_test_cases",
+        "split_tasks",
         "implement_code",
         "verify_tests",
         "ai_review",
