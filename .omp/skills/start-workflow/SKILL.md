@@ -23,11 +23,39 @@ description: >-
 
 先看上下文有没有本地 PRD 路径；再看卡号对应目录是否已经存在；都没有才从外部系统读。
 
+### 正文格式（**必须 Markdown**）
+
+`--file` 指向的需求正文**必须是 Markdown**（`.md`）。若来源是其它格式，**先转成 Markdown 再落盘**，再用转换后的路径作为 `--file`：
+
+- 常见来源：HTML / 富文本、Confluence/飞书/语雀导出、Word（`.docx`）、纯文本、JSON/XML 字段拼出的说明、Jira/Colla 工单描述与评论等
+- 转换要求：保留标题层级、列表、表格、链接、代码块；去掉无意义的脚本/样式/导航壳；不臆造原文没有的需求
+- 落盘位置：`<project_docs_dir>/origin_requirements/<标识>.md`（目录不存在就创建；同名覆盖）
+- 已是结构清晰的 `.md` → 可直接用作 `--file`，不必再拷一份
+
+### 链接与图片（落盘前处理）
+
+整理/转换正文时，对文中出现的**外链与图片**做本地化，再写 `.md`：
+
+1. **文档/页面链接**（PRD 子页、设计说明、原型说明、工单附件页等，非纯图片 URL）  
+   - 打开/拉取页面（优先项目已有 MCP / 浏览器 / 已登录读法；与「外部读取」同一套约束，不要猜工具）  
+   - 把页面里与本次需求相关的正文**抓取并转成 Markdown**，合并进主 PRD（用二级/三级标题标明来源标题与原 URL）  
+   - 抓不到（需登录且无可用读法、404、超时）→ 在正文保留原链接，并加一行注明「未能抓取：原因」；**不要**假装已读  
+   - 不要无限制递归：默认只展开**正文里显式给出的链接**一层；用户点名要跟进的再往下抓
+
+2. **图片**（Markdown 图、HTML `<img>`、设计稿截图、原型图等）  
+   - 下载到 `<project_docs_dir>/origin_requirements/assets/<标识>/`（目录不存在就创建）  
+   - 文件名简短可辨（保留扩展名；重名加序号）  
+   - 正文里改成**相对该 `.md` 的路径**，例如 `![说明](assets/<标识>/screen-1.png)`，禁止继续用外链或本机绝对路径当唯一引用  
+   - 下载失败 → 保留原 URL，并注明「图片未落地：原因」
+
+3. 纯外链且与需求无关（广告、页脚、站点导航）→ 不抓、不下载。
+
 ### 已给出本地路径
 
 1. 解析成绝对路径，确认文件存在。
 2. 不要再访问 Colla、Jira 等。
-3. 该绝对路径即为 `--file`。
+3. 若已是 Markdown → 该绝对路径即为 `--file`。
+4. 若是其它格式 → 按上一节转成 Markdown，写入 `origin_requirements/<标识>.md`，**以该 `.md` 路径**为 `--file`（不要把 `.docx`/`.html` 等直接传给 `sddl start`）。
 
 路径不存在或是目录 → 说明情况，停止，不要拼命令。
 
@@ -43,7 +71,7 @@ description: >-
 
 1. MCP 与读法只以本次 skill 输入和项目已有 rule 为准（Cursor rules、`CLAUDE.md`、`AGENTS.md`、omp rules、`ai-rules` 等）。
 2. 不要猜 MCP 名，不要自编读法；没说明就问用户，不要拼命令。
-3. 读到正文后写入 `<project_docs_dir>/origin_requirements/<标识>.md`。`project_docs_dir` 以业务根 `sdd-loop-workflow-config/workflow-local.yaml` 为准。为空或目录不存在时不要写文件，说明配置错误后停止。`origin_requirements` 目录不存在就创建；同名覆盖。
+3. 读到正文后**先转为 Markdown**（见「正文格式」），再写入 `<project_docs_dir>/origin_requirements/<标识>.md`。`project_docs_dir` 以业务根 `sdd-loop-workflow-config/workflow-local.yaml` 为准。为空或目录不存在时不要写文件，说明配置错误后停止。`origin_requirements` 目录不存在就创建；同名覆盖。
 4. 标识优先需求编号，否则用标题（只留字母、数字、中文、`-`）。
 5. 正文为空 → 停止。写入后的绝对路径即为 `--file`。
 
