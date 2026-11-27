@@ -164,6 +164,158 @@ def get_phase_config(node_id: str) -> PhaseConfig | None:
     return PHASE_CONFIGS.get(node_id)
 
 
+# 带澄清清单 + 人工定稿确认的节点：续跑时由引擎判定阶段并注入指令
+_RESUME_GUIDED_NODES = frozenset(
+    {"analyze_requirements", "plan_session", "split_tasks"}
+)
+
+
+@dataclass(frozen=True)
+class PhaseResumeHint:
+    """断点续跑阶段：由磁盘产出判定，注入「运行模式」头与第一章之间。
+
+    auto：自决消解 pending / 直接写 approved（不复述文首整段无人值守开场白）；
+    人工：向用户提问 / 等人确认后才写 approved。
+    """
+
+    stage: str  # fresh | clarify | await_approval
+    pending_count: int = 0
+    output_label: str = ""
+    auto: bool = False
+
+    @property
+    def inject_markdown(self) -> str:
+        if self.stage == "fresh":
+            return ""
+        label = self.output_label or "本节点产出文件"
+        if self.stage == "clarify":
+            if self.auto:
+                return "\n".join(
+                    [
+                        f"> **断点续跑（引擎判定）**：`{label}` 已存在 → **初稿已完成**；"
+                        f"澄清清单仍有 **{self.pending_count}** 条 pending。",
+                        "> **禁止**推倒重写初稿全文、禁止从阶段 1 重来。",
+                        "> **立即自决澄清**：对每条 `status: pending` 自行裁决并回写 "
+                        "`resolved` + `answer`（写明依据）；**禁止**残留 pending、"
+                        "**禁止**输出「请回复 / 请选择」。全部 resolved 后定稿，"
+                        "并将 approval **直接写为 `approved`**。",
+                        "",
+                    ]
+                )
+            return "\n".join(
+                [
+                    f"> **断点续跑（引擎判定）**：`{label}` 已存在 → **初稿已完成**；"
+                    f"澄清清单仍有 **{self.pending_count}** 条 pending。",
+                    "> **禁止**推倒重写初稿全文、禁止从阶段 1 重来。",
+                    "> **立即进入澄清**：只处理 `status: pending` 的项"
+                    "（含推荐强度自动采纳）；向用户提问并等待答复，"
+                    "全部 resolved 后再进入定稿确认（approval 仍保持 pending，"
+                    "须用户明确确认后才写 `approved`）。",
+                    "",
+                ]
+            )
+        # await_approval
+        if self.auto:
+            return "\n".join(
+                [
+                    f"> **断点续跑（引擎判定）**：`{label}` 已存在；"
+                    "澄清清单已全部 resolved（或无待澄清项）；"
+                    "定稿确认块仍为 **pending**。",
+                    "> **禁止**重写初稿、禁止再开澄清循环、禁止再扫一遍「阶段 1/2」。",
+                    "> **立即定稿收尾**：核对要点后将 approval **直接写为 `approved`**"
+                    "（可注明无人值守自动确认），**不要**再向用户展示确认菜单或等待回复。",
+                    "",
+                ]
+            )
+        return "\n".join(
+            [
+                f"> **断点续跑（引擎判定）**：`{label}` 已存在；"
+                "澄清清单已全部 resolved（或无待澄清项）；"
+                "定稿确认块仍为 **pending**。",
+                "> **禁止**重写初稿、禁止再开澄清循环、禁止再扫一遍「阶段 1/2」。",
+                "> **立即进入定稿确认**：展示定稿要点，请用户确认；"
+                "要改则改完后 approval 仍写 pending，用户明确确认后再写 `approved`。"
+                "**禁止**自行把 approval 写成 `approved`。",
+                "",
+            ]
+        )
+
+
+def insert_resume_inject(prompt: str, inject: str) -> str:
+    """把续跑注入插到「运行模式」引用块之后、第一个章节之前。
+
+    找不到「运行模式」头时退化为整段前置。
+    """
+    if not inject:
+        return prompt
+    lines = prompt.splitlines(keepends=True)
+    start: int | None = None
+    for i, line in enumerate(lines):
+        if line.lstrip().startswith("> **运行模式"):
+            start = i
+            break
+    if start is None:
+        return inject + prompt
+
+    end = start
+    while end < len(lines) and lines[end].lstrip().startswith(">"):
+        end += 1
+    return "".join(lines[:end]) + "\n" + inject + "".join(lines[end:])
+
+
+def resolve_phase_resume(
+    docs_dir: Path, node_id: str, state: DevWorkflowState
+) -> PhaseResumeHint | None:
+    """根据已有阶段 md 判定续跑切入点；无产出或不适用的节点返回 None。"""
+    if node_id not in _RESUME_GUIDED_NODES:
+        return None
+    cfg = PHASE_CONFIGS.get(node_id)
+    if not cfg:
+        return None
+    auto = bool(state.get("auto"))
+    path = _stage_file(docs_dir, node_id, state)
+    if path is None or not path.is_file():
+        return PhaseResumeHint(stage="fresh", auto=auto)
+
+    content = path.read_text(encoding="utf-8")
+    body = _body_without_status(content)
+    if len(body) < 40:
+        return PhaseResumeHint(stage="fresh", output_label=path.name, auto=auto)
+
+    approval_status = read_approval_status(content, cfg.approval_block)
+    checklist = parse_clarification_checklist(content)
+    has_checklist_block = "```yaml clarification_checklist" in content
+    has_structure = approval_status is not None or has_checklist_block
+    if not has_structure:
+        # 有正文但缺 YAML：仍视为已开过稿，优先去齐清单/确认，而不是当空白重来
+        return PhaseResumeHint(
+            stage="clarify",
+            pending_count=max(checklist.pending_count, 1),
+            output_label=path.name,
+            auto=auto,
+        )
+
+    if approval_status == "approved":
+        return PhaseResumeHint(stage="fresh", output_label=path.name, auto=auto)
+
+    pending = checklist.pending_items()
+    if pending or (has_checklist_block and not checklist.all_resolved):
+        return PhaseResumeHint(
+            stage="clarify",
+            pending_count=len(pending) or checklist.pending_count,
+            output_label=path.name,
+            auto=auto,
+        )
+
+    # 文件在 + 澄清已齐 + approval 非 approved → 直接定稿确认
+    return PhaseResumeHint(
+        stage="await_approval",
+        pending_count=0,
+        output_label=path.name,
+        auto=auto,
+    )
+
+
 def _body_without_status(content: str) -> str:
     if "## Workflow 状态" in content:
         content = content.split("## Workflow 状态", 1)[0]

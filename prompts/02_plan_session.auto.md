@@ -10,11 +10,9 @@
 
 {{subagent_delegation}}
 
-你是负责这次需求的技术负责人。在同一次 CLI 会话里做完：
+你是负责这次需求的技术负责人。请在同一次 CLI 会话中完成：拉起用例 → 摸清现状 → 初稿 → 自决澄清 → 定稿（含自动审批）。
 
-**拉起用例 → 先摸清现状 → 按已确认的角色写计划 → 自己消解全部分歧 → 按可行性/范围/契约核对 → 修订计划 → 直接定稿。**
-
-续跑时读取已有产出，从断点继续，不要推倒重写。
+整个流程只维护**一个文件** `{{final_output_path}}`：初稿、澄清清单、定稿正文都在这一个文件里，靠顶部 YAML 状态字段推进。续跑时读取已有 `{{final_output_path}}`，从断点继续。若「运行模式」说明之后有「断点续跑（引擎判定）」：必须严格遵守（已有初稿则直接澄清；澄清已齐则直接定稿确认），覆盖下文阶段 1/2/3 中与之冲突的叙述。
 
 ## 工作方式（必须遵守）
 
@@ -226,24 +224,6 @@
 | 配置项 | 含义 | 默认值 | 影响范围 |
 | --- | --- | --- | --- |
 
-歧义全部自决后写入 `clarification_checklist`，每条 `status: resolved` 并写上 `answer`（依据）。结束前 `all_resolved: true`，`pending_count: 0`。不要留 `pending`。字段用下面的形状：
-
-```yaml clarification_checklist
-all_resolved: true
-pending_count: 0
-items:
-  - id: D1
-    category: tech_stack
-    as_is: ""
-    question: ""
-    why_it_matters: ""
-    suggestion: ""
-    suggestion_reason: ""
-    suggestion_confidence: 0.0
-    status: resolved
-    answer: ""
-```
-
 核对结论写在 `{{output_plan}}` 末尾的「已确认结论」，不另写评审文件，也不写 `review_plan_approval`。
 
 ## 材料
@@ -260,20 +240,33 @@ items:
 动手前必须用读文件工具打开并**通读**下列每一份文档（路径相对本提示词所在 `temp-prompts/`，见「路径约定」）；未读完不得进入后续步骤，不得凭猜测或只看路径跳过。
 
 - 已定稿需求：{{doc_01-requirements.md}}
-- 已有计划（续跑）：{{doc_02-plan.md}}
+- 已有计划（续跑）：{{doc_02-plan.md}}（目标文件也是 `{{final_output_path}}`）
 
 ## 产出路径
 
 写入产出文件的正文若引用同一需求目录下其他文档，写相对**该产出文件所在目录**的路径（如 `../requirements/01-requirements.md`、`attachments/test-cases.md`），禁止本机绝对路径。（打开本提示词里列出的参考/产出路径时，仍相对 `temp-prompts/`，见上文「路径约定」。）
 
-只写 `{{final_output_path}}`。用例文件 `{{output_test_cases}}` 按文首说明处理，本会话不要自己写。
+整个流程只写一个计划文件：
 
-## 会话步骤
+| 路径 | 用途 |
+|------|------|
+| `{{final_output_path}}` | 初稿、澄清清单、定稿正文、确认状态全部在此文件，原地更新推进 |
 
-1. 按文首说明拉起用例 subagent。不要等它写完，也不要自己写用例。
-2. 按「开工前先摸清现状」扫完相关源码，再写完 `{{output_plan}}`。没摸清不要写正文。歧义全部自决，清单里不留 `pending`。
-3. 对照需求、刚才扫到的代码，做一轮可行性、范围和契约核对，把结论和已裁决项写进 `{{output_plan}}` 末尾的「已确认结论」。
-4. 在同一份 `{{output_plan}}` 写入意图已确认的分支和涉及仓库，不要改名单。后续节点只按这份名单读仓库规则。
+用例文件 `{{output_test_cases}}` 按文首说明处理，本会话不要自己写。
+
+## 四阶段任务
+
+### 阶段 1：计划初稿
+
+若 `{{final_output_path}}` 已存在且结构完整（顶部已有 `clarification_checklist` 与 `plan_approval`），可跳过正文重写，直接进入阶段 2。
+
+1. 按文首说明拉起用例 subagent。不要等它写完，也不要自己写用例
+2. 按「开工前先摸清现状」扫完相关源码。没摸清不要写正文
+3. 按已确认的角色输出**初步**计划正文
+4. 列出待澄清问题清单（可先标 `pending`，须在本节点内全部消解）
+5. **不要**在此阶段输出最终定稿
+
+「角色与版块」之后紧跟 YAML（初稿阶段 `plan_approval.status` 写 `pending`）：
 
 ```yaml plan_metadata
 git_base: {{git_base}}
@@ -286,7 +279,90 @@ delivery_blocks:
 role_basis: "照抄意图节点的依据"
 ```
 
-5. 在同一份文件里写入定稿标记（`confirmed_at` 用当前时间）：
+```yaml clarification_checklist
+all_resolved: false
+pending_count: 1
+items:
+  - id: D1
+    category: tech_stack
+    as_is: "当前现状（用直白话描述：现在怎么做、现有逻辑/数据/交互是什么样；全新增无现状则留空）"
+    question: "待澄清的具体问题（用自然语言完整描述，禁止 d2/m0 等内部编号或缩写代号）"
+    why_it_matters: "为什么需要确认"
+    suggestion: "建议的默认选项或倾向（具体内容，不要用编号代指）"
+    suggestion_reason: "为什么推荐：依据哪条规则 / 与现网或仓库现状一致性 / 权衡了什么"
+    suggestion_confidence: 0.0
+    status: pending
+    answer: ""
+```
+
+```yaml plan_approval
+status: pending
+confirmed_at: ""
+user_note: ""
+```
+
+规则：唯一 `id`；`pending_count` 等于 pending 条数；无歧义时 `items: []`、`all_resolved: true`。
+
+- **`suggestion` 必须配 `suggestion_reason`**；**`suggestion_confidence`（0-1）** 无人值守下仅作可追溯标记
+- **所有字段必须用自然语言完整描述**，禁止代号；模块/规则/配置写全名 + 一句话说明
+- `plan_metadata` 原样透传意图已确认的分支与涉及仓库，不要改名单
+
+YAML 之后按「计划正文结构」输出 Markdown 正文。写入 `{{final_output_path}}`。
+
+### 阶段 2：自决澄清（禁止提问）
+
+若文件已 `all_resolved: true`，跳过本阶段，进入阶段 3。
+
+对每条 `pending`：
+
+1. 按优先级裁决：`ai-rules` → 本 prompt → `suggestion` → 与需求原文/现网最一致的方案
+2. 与当前角色无关的项：按推荐采纳，注明「本次没有该版块，按推荐自决」
+3. 立即回写 `status: resolved` + `answer`（写明依据）；**`answer` 必须用自然语言完整描述**
+4. 更新 `pending_count`、`all_resolved`
+5. 若自决引入新歧义，追加条目后同样自行 resolved
+
+**仅当** `all_resolved: true` 且 `pending_count: 0` 时进入阶段 3。**禁止**把项留在 pending，也**禁止**输出待确认选项。`plan_approval.status` 保持 `pending`。
+
+### 阶段 3：计划定稿
+
+1. 吸收已决议内容；对照需求与已扫源码做可行性、范围和契约核对
+2. 输出最终计划文档，正文按「计划正文结构」；文末「已确认结论」写明核对结果与已裁决项
+3. 写入 `{{final_output_path}}`（覆盖初稿，保留顶部 YAML）
+
+定稿紧接着三个 YAML 块。
+
+**1) 计划元数据**
+
+```yaml plan_metadata
+git_base: {{git_base}}
+git_branch: {{git_branch}}
+involved_repos:
+{{involved_repos_yaml}}
+delivery_role: backend
+delivery_blocks:
+  - backend
+role_basis: "照抄意图节点的依据"
+```
+
+**2) 澄清清单（全部 resolved）**
+
+```yaml clarification_checklist
+all_resolved: true
+pending_count: 0
+items:
+  - id: D1
+    category: tech_stack
+    as_is: "当前现状（定稿时保留该澄清项对应的 AS-IS；全新增则留空）"
+    question: "..."
+    why_it_matters: "..."
+    suggestion: "..."
+    suggestion_reason: "..."
+    suggestion_confidence: 0.0
+    status: resolved
+    answer: "无人值守：按 ai-rules / suggestion …"
+```
+
+**3) 定稿确认（必须直接 approved）**
 
 ```yaml plan_approval
 status: approved
@@ -294,6 +370,15 @@ confirmed_at: "<ISO8601>"
 user_note: "无人值守按 ai-rules 定稿"
 ```
 
-6. 用例文件还没写完时不要结束会话。
+写入 `{{final_output_path}}`。不要写 `02-plan-review.md`。
 
-完整 Markdown 必须用写文件工具写入 `{{final_output_path}}`。不要写 `02-plan-review.md`。
+### 阶段 4：自动确认
+
+写完定稿后确认 `plan_approval.status: approved` 与 checklist 无 pending。**不要**询问用户是否确认。用例文件还没写完时不要结束会话。
+
+## 写作约束
+
+1. 计划正文按「计划正文结构」写；禁止重复，交叉引用须可定位
+2. 澄清清单应覆盖常见技术歧义；全部须在本节点 resolved
+3. 问题要具体；答案要可追溯到 rule / suggestion
+4. 不要 review 测试用例，不要做 plan 和用例的覆盖比对

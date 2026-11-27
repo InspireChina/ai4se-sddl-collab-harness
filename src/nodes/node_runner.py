@@ -57,8 +57,10 @@ from ..role_output import (
 from ..phase_gate import (
     PHASE_CONFIGS,
     get_phase_config,
+    insert_resume_inject,
     phase_complete,
     phase_content_ready,
+    resolve_phase_resume,
     plan_session_complete,
     requirements_logical_name,
     resolve_doc_path,
@@ -188,12 +190,24 @@ class NodeRunner:
         prompt = self._render_prompt(prompt_template, context)
         if reopen:
             prompt = self._with_reopen_inject(prompt, context)
+        resume_hint = resolve_phase_resume(docs_dir, node_id, state)
+        resume_inject = ""
+        if resume_hint and resume_hint.stage != "fresh":
+            resume_inject = resume_hint.inject_markdown
+            prompt = insert_resume_inject(prompt, resume_inject)
+            logger.info(
+                "断点续跑：节点 [%s] 判定 stage=%s pending=%s",
+                node_cfg.name,
+                resume_hint.stage,
+                resume_hint.pending_count,
+            )
         logger.info(
-            "节点 [%s] 使用 prompt %s（%s%s）",
+            "节点 [%s] 使用 prompt %s（%s%s%s）",
             node_cfg.name,
             prompt_rel,
             "无人值守" if auto else "人工介入",
             " +reopen注入" if reopen else "",
+            f" +续跑:{resume_hint.stage}" if resume_inject else "",
         )
         if node_id == "identify_intent":
             return self._run_identify_intent(node_cfg, docs_dir, prompt, state)
@@ -1068,6 +1082,9 @@ class NodeRunner:
         prompt = self._render_prompt(template, context)
         if reopen:
             prompt = self._with_reopen_inject(prompt, context)
+        resume_hint = resolve_phase_resume(docs_dir, node_id, state)
+        if resume_hint and resume_hint.stage != "fresh":
+            prompt = insert_resume_inject(prompt, resume_hint.inject_markdown)
         return prompt
 
     def _with_reopen_inject(self, prompt: str, context: dict[str, str]) -> str:
