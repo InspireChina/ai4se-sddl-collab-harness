@@ -145,7 +145,7 @@ def install_skills(engine: Path, app_root: Path) -> list[Path]:
     written: list[Path] = []
     for skill_name in INSTALL_SKILL_NAMES:
         raw = skill_template_path(engine, skill_name).read_text(encoding="utf-8")
-        # start-workflow 模板含 {tool}；reopen-workflow 无占位则原样写入
+        # start-workflow 模板含 {tool}（仅 CLI 拼装用）；浏览器读法在正文里按 Agent 自选，不按目录改写
         for _agent, (relative_dir, tool) in AGENT_SKILL_DIRS.items():
             dest = app_root / relative_dir / skill_name
             if dest.exists():

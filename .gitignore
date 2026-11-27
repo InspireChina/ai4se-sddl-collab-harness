@@ -16,6 +16,13 @@ build/**
 .omp/config.yml
 .codex/
 
+# Agent 技能目录由 sddl init 从 skills/ 生成；引擎仓库只维护 skills/
+.cursor/skills/
+.claude/skills/
+.omp/skills/
+.agents/skills/
+.codex/skills/
+
 # auth-service secrets & local data
 auth-service/.env
 auth-service/**/*.db
