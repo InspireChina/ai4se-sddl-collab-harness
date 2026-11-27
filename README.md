@@ -146,7 +146,7 @@ nodes:
 
 ## 4. 内置 Skill
 
-`sddl init` 会把引擎内置 skill 同步到业务项目的 AI 技能目录（如 `.cursor/skills/`）。当前内置如下。
+引擎只维护 `skills/` 下的通用模板；`sddl init` 会同步到业务项目的 AI 技能目录（如 `.cursor/skills/`）。当前内置如下。
 
 ### 4.1 `start-workflow`
 
