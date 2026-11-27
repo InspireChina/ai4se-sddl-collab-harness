@@ -1349,7 +1349,12 @@ class NodeRunner:
                         if raw.get("why_it_matters"):
                             lines.append(f"  - 原因：{raw['why_it_matters']}")
                         if raw.get("suggestion"):
-                            lines.append(f"  - 建议：{raw['suggestion']}")
+                            lines.append(f"  - 建议（含做完后效果）：{raw['suggestion']}")
+                        if raw.get("suggestion_reason"):
+                            lines.append(f"  - 推荐原因：{raw['suggestion_reason']}")
+                        conf = raw.get("suggestion_confidence")
+                        if conf is not None and str(conf).strip() != "":
+                            lines.append(f"  - 推荐把握：{conf}")
                     return "\n".join(lines) if lines else "（无待澄清项）"
                 return "\n".join(
                     f"- [{raw.get('id', '?')}] {raw.get('question', raw)}" for raw in value

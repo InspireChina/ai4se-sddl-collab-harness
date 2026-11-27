@@ -59,7 +59,12 @@
 
 用人话写。计划要像资深工程师写给同事的内部文档，直白、具体。禁止堆砌「综上所述」「值得一提的是」、空洞套话和 emoji。
 
-每个澄清项若涉及现状，先把当前怎么做写进 `as_is`，再提问。全新增、没有既有实现则 `as_is` 留空。`question` / `suggestion` / `suggestion_reason` / `answer` 用完整自然语言，禁止 `d2` / `m0`、模块缩写、内部工单号。模块、规则、配置要写全名加一句话说明。推荐必须同时给出把握度（0-1）和原因。
+**澄清项 `as_is`（质量硬门槛）**：每个澄清项若涉及现状，必须先写 `as_is` 再提问。对项目零背景的人**只读这一条 `as_is`**，就能定位「哪块功能 + 哪个接口/入口 + 现在怎么跑」——否则视为未写清，禁止带着空话去问用户。
+
+- **必含**：①业务功能名（一句话）；②入口——HTTP 写 method+path，Job 写调度名，MQ 写主题/生产消费方，前端写页面路由或按钮文案；③当前行为（谁调用、关键入参/出参或可见结果、关键限制）；④无现成入口则写「无现成接口/入口，属新增」。
+- **坏例**：「订单模块已有取消。」**好例**：「订单取消：现有 `POST /api/orders/{id}/cancel`，C 端下单用户可调；已支付走退款并写 `cancel_reason`；管理端无单独取消接口；前端入口在「我的订单 → 详情 → 取消订单」。」
+- 全新增、没有既有实现则 `as_is` 留空。`as_is` / `question` / `suggestion` / `suggestion_reason` / `answer` 用完整自然语言，禁止 `d2` / `m0`、模块缩写、内部工单号。模块、规则、配置要写全名加一句话说明。
+- **推荐（`suggestion`）必须写清落地效果（大白话）**：除了「选什么」，还要写「按这个做完后：哪个入口怎么变、谁能调用、调用方/用户看到什么、相对 `as_is` 多了/少了/不变什么」。**坏例**：「建议复用现有取消接口。」**好例**：「建议沿用 `POST /api/orders/{id}/cancel` 并放开管理端调用。做完后：C 端取消不变；管理端订单详情也能调同一接口填原因；已支付同样退款；不必新开第二条取消 API。」推荐须同时给出把握度（0-1）和原因。向用户提问时**先展示完整 `as_is`，再问问题与推荐（含效果）**。
 
 把握度按下面的规则给：
 
@@ -289,11 +294,11 @@ pending_count: 1
 items:
   - id: D1
     category: tech_stack
-    as_is: "当前现状（用直白话描述：现在怎么做、现有逻辑/数据/交互是什么样；全新增无现状则留空）"
+    as_is: "（零熟悉度可读）功能名 + 入口(method/path|Job|MQ|页面) + 当前行为；全新增则留空。例：订单取消：POST /api/orders/{id}/cancel，C 端用户可调；已支付退款写 cancel_reason；管理端无入口。"
     question: "待澄清的具体问题（用自然语言完整描述，禁止 d2/m0 等内部编号或缩写代号）"
     why_it_matters: "为什么需要确认"
-    suggestion: "建议的默认选项或倾向（具体内容，不要用编号代指）"
-    suggestion_reason: "为什么推荐：依据哪条规则 / 与现网或仓库现状一致性 / 权衡了什么"
+    suggestion: "（大白话）选什么 + 做完后效果。例：推荐复用 POST /api/orders/{id}/cancel 并扩管理端调用；做完后：C 端照旧取消；管理端订单详情也可取消，同接口写 cancel_reason，已支付仍走退款。"
+    suggestion_reason: "为什么推荐：依据 / 权衡 / 与现网一致性；可补一句不选另一方案会怎样"
     suggestion_confidence: 0.0
     status: pending
     answer: ""
@@ -312,8 +317,10 @@ user_note: ""
 - 若无待澄清项：`items: []`、`pending_count: 0`、`all_resolved: true`
 - `pending_count` 必须等于 `status: pending` 的条目数
 - **`suggestion` 必须配 `suggestion_reason`**：写明为什么推荐该选项，不得只给结论不给原因
+- **`suggestion` 须含最终效果（大白话硬门槛）**：选了什么 + 做完后入口/行为/可见结果；零背景读完能想象落地样子。坏例：「建议复用现有接口。」好例见上方 YAML 占位。
 - **`suggestion_confidence`（0-1 浮点）**：推荐把握；无法评估写 `0.0`。当前阈值 = `{{recommendation_threshold}}`
-- **面向用户的所有字段必须用自然语言完整描述**：禁止 `d2`/`m0`、模块缩写、内部工单号；模块/规则/配置写全名 + 一句话说明
+- **面向用户的所有字段（含 `as_is`）必须用自然语言完整描述**：禁止 `d2`/`m0`、模块缩写、内部工单号；模块/规则/配置写全名 + 一句话说明
+- **`as_is` 未达标不得提问**：涉及现状却未点名功能与接口/入口、或读完仍不知「说的是哪一块」→ 先补写再进入阶段 2
 - `plan_metadata` 原样透传意图已确认的分支与涉及仓库，不要改名单
 
 YAML 之后按「计划正文结构」输出 Markdown 正文（初稿允许留待确认标记）。写入 `{{final_output_path}}`。
@@ -328,7 +335,8 @@ YAML 之后按「计划正文结构」输出 Markdown 正文（初稿允许留�
    - **推荐强度自动采纳（先于提问）**：若该条 `suggestion_confidence >= {{recommendation_threshold}}`，**直接采纳推荐方案**——`status: resolved`，`answer` 写入 `suggestion` + `suggestion_reason`（注明「按推荐强度自动采纳」），同步更新 `pending_count` / `all_resolved`，**不要**就该项询问用户
    - **与当前角色无关的项**：按推荐采纳，注明「与当前用户角色无关」，不要问
    - **低于阈值才问用户**：仅当 `suggestion_confidence < {{recommendation_threshold}}`（或为 0 / 无法评估）且与本次角色相关时，才向用户呈现；允许确认、修改、拒绝或补充
-   - 展示推荐项时**必须同时给出推荐把握度与推荐原因**
+   - **展示顺序（强制）**：先完整展示 `as_is`，再展示 `question` / 推荐与把握度；禁止跳过现状直接问
+   - 展示推荐项时**必须同时给出**：推荐方案全文（含「做完后会怎样」）、把握度、推荐原因；不得只说「建议选 A」
 2. 用户给出回答后，**立即**更新 `{{final_output_path}}` 顶部的 `clarification_checklist`：
    - 已确认项：`status: resolved`，`answer` 写入用户最终结论
    - 同步更新 `pending_count`、`all_resolved`
@@ -368,7 +376,7 @@ pending_count: 0
 items:
   - id: D1
     category: tech_stack
-    as_is: "当前现状（定稿时保留该澄清项对应的 AS-IS；全新增则留空）"
+    as_is: "（定稿保留）功能名 + 入口 + 当前行为；全新增则留空"
     question: "..."
     why_it_matters: "..."
     suggestion: "..."

@@ -57,7 +57,14 @@
 
 ## 写作语言
 
-用人话写，像内部技术文档。澄清项涉及现状时先写 `as_is`。全新增则 `as_is` 留空。禁止代号和缩写，模块、规则、配置写全名加一句话。
+用人话写，像内部技术文档。禁止代号和缩写，模块、规则、配置写全名加一句话。
+
+**澄清项 `as_is`（质量硬门槛）**：涉及现状时必须先写 `as_is` 再自决。对项目零背景的人**只读这一条**就能定位「哪块功能 + 哪个接口/入口 + 现在怎么跑」；否则先补写再落 `answer`。
+
+- **必含**：①业务功能名；②入口（HTTP method+path / Job 调度名 / MQ 主题与生产消费方 / 前端页面路由或按钮）；③当前行为（谁调用、关键结果与限制）；④无现成入口写「无现成接口/入口，属新增」。
+- **坏例**：「订单模块已有取消。」**好例**：「订单取消：现有 `POST /api/orders/{id}/cancel`，C 端下单用户可调；已支付走退款并写 `cancel_reason`；管理端无单独取消接口。」
+- 全新增则 `as_is` 留空。
+- **推荐（`suggestion`）必须写清落地效果（大白话）**：选了什么 + **做完后**哪个入口怎么变、谁能调用、看到什么、相对 `as_is` 多了/少了/不变什么。禁止只写「建议复用/建议新建」。**坏例**：「建议复用现有取消接口。」**好例**：「建议沿用 `POST /api/orders/{id}/cancel` 并放开管理端。做完后：C 端取消不变；管理端详情也能调同一接口填原因；已支付同样退款；不必新开第二条取消 API。」
 
 把握度规则（写入 `suggestion_reason` 时对照；无人值守不因把握度停下来问人）：
 
@@ -285,11 +292,11 @@ pending_count: 1
 items:
   - id: D1
     category: tech_stack
-    as_is: "当前现状（用直白话描述：现在怎么做、现有逻辑/数据/交互是什么样；全新增无现状则留空）"
+    as_is: "（零熟悉度可读）功能名 + 入口(method/path|Job|MQ|页面) + 当前行为；全新增则留空。例：订单取消：POST /api/orders/{id}/cancel，C 端用户可调；已支付退款写 cancel_reason；管理端无入口。"
     question: "待澄清的具体问题（用自然语言完整描述，禁止 d2/m0 等内部编号或缩写代号）"
     why_it_matters: "为什么需要确认"
-    suggestion: "建议的默认选项或倾向（具体内容，不要用编号代指）"
-    suggestion_reason: "为什么推荐：依据哪条规则 / 与现网或仓库现状一致性 / 权衡了什么"
+    suggestion: "（大白话）选什么 + 做完后效果。例：推荐复用 POST /api/orders/{id}/cancel 并扩管理端调用；做完后：C 端照旧取消；管理端详情也可取消，同接口写 cancel_reason，已支付仍走退款。"
+    suggestion_reason: "为什么推荐：依据 / 权衡 / 与现网一致性；可补一句不选另一方案会怎样"
     suggestion_confidence: 0.0
     status: pending
     answer: ""
@@ -303,8 +310,9 @@ user_note: ""
 
 规则：唯一 `id`；`pending_count` 等于 pending 条数；无歧义时 `items: []`、`all_resolved: true`。
 
-- **`suggestion` 必须配 `suggestion_reason`**；**`suggestion_confidence`（0-1）** 无人值守下仅作可追溯标记
-- **所有字段必须用自然语言完整描述**，禁止代号；模块/规则/配置写全名 + 一句话说明
+- **`suggestion` 必须配 `suggestion_reason`**，且 `suggestion` 须含「做完后会怎样」的大白话效果；**`suggestion_confidence`（0-1）** 无人值守下仅作可追溯标记
+- **所有字段（含 `as_is` / `suggestion`）必须用自然语言完整描述**，禁止代号；模块/规则/配置写全名 + 一句话说明
+- **`as_is` / `suggestion` 未达标不得自决落盘**：现状未点名功能与入口，或推荐未写清落地效果 → 先补写再写 `answer`
 - `plan_metadata` 原样透传意图已确认的分支与涉及仓库，不要改名单
 
 YAML 之后按「计划正文结构」输出 Markdown 正文。写入 `{{final_output_path}}`。
@@ -352,7 +360,7 @@ pending_count: 0
 items:
   - id: D1
     category: tech_stack
-    as_is: "当前现状（定稿时保留该澄清项对应的 AS-IS；全新增则留空）"
+    as_is: "（定稿保留）功能名 + 入口 + 当前行为；全新增则留空"
     question: "..."
     why_it_matters: "..."
     suggestion: "..."

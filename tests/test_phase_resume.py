@@ -86,6 +86,8 @@ def test_resume_clarify_when_pending_items(tmp_path: Path) -> None:
     assert "立即进入澄清" in hint.inject_markdown
     assert "推荐强度自动采纳" in hint.inject_markdown
     assert "向用户提问并等待答复" in hint.inject_markdown
+    assert "提问前核验 `as_is` / `suggestion`" in hint.inject_markdown
+    assert "做完后会怎样" in hint.inject_markdown
     assert "立即自决澄清" not in hint.inject_markdown
 
 
@@ -105,6 +107,8 @@ def test_resume_clarify_auto_self_resolve(tmp_path: Path) -> None:
     assert "立即自决澄清" in text
     assert "直接写为 `approved`" in text
     assert "禁止**残留 pending" in text or "禁止残留 pending" in text
+    assert "自决前核验 `as_is` / `suggestion`" in text
+    assert "做完后会怎样" in text
     assert "向用户提问并等待答复" not in text
     assert "推荐强度自动采纳" not in text
 

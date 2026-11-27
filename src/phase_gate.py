@@ -199,6 +199,9 @@ class PhaseResumeHint:
                         "`resolved` + `answer`（写明依据）；**禁止**残留 pending、"
                         "**禁止**输出「请回复 / 请选择」。全部 resolved 后定稿，"
                         "并将 approval **直接写为 `approved`**。",
+                        "> **自决前核验 `as_is` / `suggestion`**：现状须写清「哪块功能 + 哪个接口/入口"
+                        " + 当前行为」；推荐须用大白话写清「选什么 + 做完后会怎样」；"
+                        "未达标先补写再落 `answer`。",
                         "",
                     ]
                 )
@@ -211,6 +214,9 @@ class PhaseResumeHint:
                     "（含推荐强度自动采纳）；向用户提问并等待答复，"
                     "全部 resolved 后再进入定稿确认（approval 仍保持 pending，"
                     "须用户明确确认后才写 `approved`）。",
+                    "> **提问前核验 `as_is` / `suggestion`**：现状须写清「哪块功能 + 哪个接口/入口"
+                    " + 当前行为」；推荐须用大白话写清「选什么 + 做完后会怎样」；"
+                    "未达标先补写再问；展示时先 `as_is`，再 `question` 与推荐效果。",
                     "",
                 ]
             )
